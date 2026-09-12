@@ -31,6 +31,7 @@ export async function detectSensitive(prompt: string, config: Config, env: Envir
           { role: 'user', content: prompt },
         ],
         response_format: { type: 'json_object' },
+        ...(config.enableThinking === undefined ? {} : { chat_template_kwargs: { enable_thinking: config.enableThinking } }),
         stream: false,
       }),
     });

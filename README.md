@@ -1,34 +1,40 @@
 # hecc
 
-Encrypt sensitive spans locally before pasting a prompt into Claude Code. `hecc`
-sends your original text to a **trusted detection provider** that you configure,
-then uses a local AES-256-GCM key to replace the detected spans with ciphertext.
-`hecc chat` provides a terminal interface that protects each prompt and sends it
-to Claude Code automatically. The companion plugin adds a session reminder.
+Encrypt sensitive text before Claude Code sends it remotely. `hecc claude` keeps
+Claude's native terminal interface and subscription login, with a local gateway
+that inspects complete model requests and a Docker sandbox that blocks other
+network traffic. Your configured **trusted detection provider**, such as local
+vLLM, identifies sensitive spans; Node encrypts them with a local AES-256-GCM key.
+
+For narrower workflows, `hecc protect` prints a protected prompt for pasting and
+`hecc chat` offers a prompt-only terminal wrapper. The companion plugin supplies
+a reminder; it cannot intercept requests by itself.
 
 This is conventional authenticated encryption, **not homomorphic inference**.
 Claude can use the surrounding text but cannot understand encrypted values.
 
 ```mermaid
 flowchart LR
-    U[Your prompt] --> C[hecc protect]
-    C -->|Original text| P[Trusted LLM or local vLLM]
-    P -->|Exact sensitive substrings| C
-    K[Local encryption key] --> C
-    C -->|Text with encrypted spans| O[Protected output]
-    O -->|hecc chat sends, or you paste| A[Claude Code]
-    O --> D[hecc decrypt locally]
-    K --> D
-    D --> R[Restored text in your terminal]
+    U[Native Claude and local tools] -->|Isolated local relay| G[HECC gateway]
+    G -->|Original request text| P[Trusted LLM or local vLLM]
+    P -->|Sensitive spans| G
+    K[Local encryption key] --> G
+    G -->|Protected request and subscription OAuth| A[Anthropic]
+    A -->|Streamed response| G
+    G --> U
 ```
 
-See [how it works](docs/how-it-works.md) for the detection, encryption, and
+See the [gateway guide](docs/gateway.md) for the native launcher and network
+boundary, [how it works](docs/how-it-works.md) for the detection, encryption, and
 decryption steps, and [the security model](docs/security.md) for trust boundaries
 and limitations. The instructions below cover installation and configuration.
 
 ## Install
 
-Requires Node.js 22 or later on Linux, macOS, or WSL. The project is written in
+Requires Node.js 22 or later. The enforced `hecc claude` launcher additionally
+requires Linux ARM64 or x86-64, a local Docker daemon, and the native Linux Claude
+binary. Manual preprocessing and the older chat wrapper also work on macOS or
+WSL. The project is written in
 TypeScript and compiles to Node.js ES modules in `dist/`. TypeScript and Node type
 definitions are development dependencies; the installed CLI has no runtime npm
 dependencies. From this checkout:
@@ -119,7 +125,7 @@ value with `--timeout-ms`. Unknown configuration fields are rejected.
 
 ### Local vLLM with `.env`
 
-`hecc protect` also reads `.env` from your current working directory. For a local
+`hecc protect`, `hecc chat`, and `hecc claude` read `.env` from your current working directory. For a local
 vLLM gateway, use the following settings (substitute your served model and key):
 
 ```dotenv
@@ -128,6 +134,7 @@ HECC_MODEL=qwen3.8-27b
 HECC_API_KEY_ENV=HECC_API_KEY
 HECC_API_KEY=your-local-gateway-key
 HECC_TIMEOUT_MS=120000
+HECC_ENABLE_THINKING=false
 ```
 
 Set file permissions with `chmod 600 .env`. This repository ignores `.env` files
@@ -136,6 +143,14 @@ containing this file; no shell `source` command is required. Exported environmen
 variables override `.env`, which overrides the corresponding `config.json`
 provider settings. `HECC_API_KEY_ENV=` explicitly disables authentication.
 
+For Qwen on vLLM, `HECC_ENABLE_THINKING=false` sends
+`chat_template_kwargs: {"enable_thinking": false}` to reduce detection latency.
+Use `true` to enable thinking, or omit the setting for providers that do not
+support this extension. The optional equivalent in `config.json` is the boolean
+`enableThinking`. Evaluate detection on representative inputs when changing it;
+disabling thinking is a latency choice, not a guarantee of detection quality.
+See [vLLM's reasoning documentation](https://docs.vllm.ai/en/latest/features/reasoning_outputs/).
+
 Initialize the local key with `hecc init` as described above before first use.
 The `.env` file only supplies provider settings and the named API credential;
 it cannot relocate the encryption key or change detection instructions. All
@@ -143,7 +158,41 @@ other variables are ignored, and the file is parsed as data without executing
 shell code. Decryption does not read `.env` or contact vLLM. Keep real credentials
 out of prompts and source control.
 
-## Protect a prompt
+## Native Claude with automatic request protection
+
+After initializing the key and configuring the detector:
+
+```sh
+hecc sandbox-build
+claude auth login
+hecc claude
+```
+
+Claude's native terminal interface and permission dialogs run inside a Docker
+sandbox. A local gateway protects detected text in system context, prompts,
+history, tool inputs, file contents and tool results before forwarding model
+requests. Use `hecc claude --model MODEL` to select a model, or
+`hecc claude --print < prompt.txt` for piped input.
+
+This uses the saved claude.ai **subscription** login. HECC sets only the base URL,
+preserves OAuth authorization and capability headers, and adds no replacement
+API credential. Login and refresh happen outside the sandbox; an expired login
+requires `claude auth login` and a relaunch. See Claude's
+[subscription gateway documentation](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways).
+
+Your current project is writable at `/workspace`; edits persist. The host key,
+detector environment and root `.env` are hidden from Claude. Other network access
+is blocked, so online tools, remote MCP, downloads and browser integration are
+unavailable. Images, opaque uploads and unsupported API fields are blocked.
+Tools use container programs, and the temporary Claude home is deleted on exit.
+There is no cross-launch history persistence yet.
+
+Complete interception still depends on a probabilistic detector: missed secrets
+can pass through. Every request is inspected, which adds detector latency.
+Read the [gateway guide](docs/gateway.md) for supported fields, resource limits,
+signed-thinking replay, network enforcement and verification.
+
+## Prompt-only alternatives
 
 ### Automatic terminal chat
 
@@ -268,14 +317,12 @@ or a marker. Each span is authenticated independently; surrounding text, marker
 position, deletion, and rearrangement are not authenticated. Changing the marker
 prefix so it is no longer recognizable can make it ordinary text to the decoder.
 
-Only prompts explicitly passed through `hecc protect` are covered. Direct Claude
-input, files, tool results, existing history, and other provider traffic are
-outside this version. Claude's
+`hecc protect` and `hecc chat` cover only submitted prompts. Use `hecc claude` for
+complete model-request inspection and network confinement. Claude's
 [hook decision-control documentation](https://code.claude.com/docs/en/hooks#decision-control)
 specifies that `UserPromptSubmit` cannot replace a submitted prompt, so the plugin
-uses only a `SessionStart` reminder. Automatic submission happens in the `hecc
-chat` wrapper before Claude is invoked. No gateway or Claude authentication
-changes are required.
+uses only a `SessionStart` reminder. The new native launcher intercepts HTTP
+requests outside Claude's binary; it does not rely on submission hooks.
 
 Detection is probabilistic: a provider can miss secrets, misunderstand your
 categories, or follow malicious instructions embedded in input. Output validation
@@ -299,6 +346,9 @@ npm run typecheck
 npm test
 npm run validate:plugin
 npm pack --dry-run
+# Optional Linux Docker + native Claude integration tests:
+hecc sandbox-build
+npm run test:sandbox
 ```
 
 Tests use synthetic data and local mock HTTP providers. They cover exact matching,
@@ -308,6 +358,9 @@ responses, failure output, offline decryption, and the session hook. Plugin
 validation requires the Claude Code CLI. No live provider is needed for tests.
 Chat tests also use a mock Claude process to check protected stdin, session
 continuity, credential isolation, streaming, cancellation, and failure handling.
+Gateway tests verify complete-request protection, OAuth forwarding, signed-block
+replay, streaming and blocked routes. The Docker suite tests actual network and
+Unix-socket confinement and runs native Claude against a mock upstream service.
 
 Source files live in `src/`, `bin/`, `scripts/`, and `test/`. Strict TypeScript
 checking covers all four directories. Run `npm run build` after editing source;

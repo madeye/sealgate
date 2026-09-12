@@ -1,6 +1,8 @@
 # Security model
 
-`hecc` protects detected spans in prompts you explicitly preprocess. Its encryption
+`hecc claude` protects detected spans in complete outbound model requests and
+blocks other network traffic. The older `hecc protect` and `hecc chat` commands
+cover submitted prompts only. Its encryption
 and detection steps have different guarantees. This page describes what each
 participant receives and the limits to consider when using the output.
 
@@ -11,6 +13,13 @@ participant receives and the limits to consider when using the output.
 | Your local CLI | Yes | During protection | Yes | Yes |
 | Trusted detection endpoint | Yes | When authentication is enabled | No | Not sent by hecc |
 | Claude Code | Only if you send it separately | Not sent by hecc | Not sent by hecc | Sent by hecc chat, or pasted by you |
+
+The table describes the prompt-only workflows. In `hecc claude`, **local Claude
+sees original text**; the gateway protects it before it reaches remote Anthropic.
+The Docker launcher hides the host key directory, provider environment and root
+`.env`, and permits network access only through the inspecting gateway. Anthropic
+receives its own subscription OAuth credential as required for authentication;
+that credential is not sent to the detector. See [gateway boundaries](gateway.md).
 
 Choose a detection provider that you trust with the entire original prompt. A
 local vLLM service can keep detection on your machine, but its own logs and access
@@ -32,7 +41,8 @@ secret will be detected.
 ## Cryptographic boundaries
 
 AES-256-GCM hides matched content and authenticates each marker using the local
-key. Fresh nonces make repeated plaintext produce independent ciphertext. Without
+key. Fresh nonces make new encryptions independent. The gateway reuses ciphertext
+for repeated spans within a session, revealing equality to preserve stable history. Without
 the key, Claude cannot interpret the encrypted values or compute on them.
 
 Markers reveal approximate plaintext lengths and where spans occur. Surrounding
@@ -52,7 +62,7 @@ user with mode `700`, in a file with mode `600`. Provider credentials can reside
 in a private `.env`, which this project ignores in Git and excludes from packages.
 These permissions do not isolate processes running under the same OS account.
 
-The Claude plugin's instruction to avoid reading keys or running decryption is
+Outside the enforced `hecc claude` launcher, the Claude plugin's instruction to avoid reading keys or running decryption is
 guidance, not an access-control boundary. A tool running as your user may still
 read your files. Run decryption yourself in a separate terminal, and use OS-level
 isolation if local agent access is a threat you need to prevent.
@@ -85,10 +95,20 @@ the exit code when scripting, and copy only a successful protected result.
 
 ## Scope
 
-Direct Claude input, source files, tool results, existing history, and other
-network traffic remain outside this version. No gateway intercepts Claude's
-requests, and no submission hook rewrites them. Only text passed through
-`hecc protect` or submitted through `hecc chat` is processed.
+In `hecc protect` and `hecc chat`, direct Claude input, source files, tool results,
+and other context remain outside protection. The `hecc claude` gateway instead
+inspects all supported outgoing model-request text, including file/tool context
+and history. Opaque uploads and unknown protocols are blocked. Other network
+traffic cannot bypass the gateway because the native CLI and its descendants run
+in a networkless Docker namespace with host Unix sockets denied by seccomp.
+
+This protects remote egress, not local plaintext at rest. Native Claude can keep
+original content in the temporary home until it is removed on exit. The project
+is writable, so tool changes to files persist. Host programs that later execute
+those files are outside confinement. The host kernel, Docker daemon, HECC process,
+terminal and trusted detector remain trusted. Encoded secrets and adversarial
+inputs can evade model detection; interception is not a guarantee of detection.
+Read [the full gateway guide](gateway.md) for supported features and limits.
 
 See the [usage guide](../README.md) for configuration, local decryption, backups,
 and limits, and [how it works](how-it-works.md) for the marker construction.

@@ -8,6 +8,7 @@ export interface Config {
   timeoutMs: number;
   detectionInstructions: string;
   additionalCategories: string[];
+  enableThinking?: boolean;
 }
 
 export interface InitOptions {

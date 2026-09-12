@@ -30,6 +30,15 @@ test('provider receives configured model, instructions, auth and original prompt
   assert.match(received.body.messages[0].content, /Internal project names/);
   assert.deepEqual(received.body.response_format, { type: 'json_object' });
   assert.equal(received.body.stream, false);
+  assert.equal(received.body.chat_template_kwargs, undefined);
+});
+
+test('explicit Qwen/vLLM thinking configuration reaches the chat template', async t => {
+  const baseUrl = await provider(t, async (req, res) => {
+    assert.deepEqual((await requestBody(req)).chat_template_kwargs, { enable_thinking: false });
+    answer(res, { sensitive_substrings: [] });
+  });
+  await detectSensitive('public', { ...makeConfig({ baseUrl, model: 'qwen', apiKeyEnv: null }), enableThinking: false });
 });
 
 test('missing API key fails before a request; explicit unauthenticated configuration works', async t => {

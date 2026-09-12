@@ -22,6 +22,7 @@ interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
   response_format: { type: string };
   stream: boolean;
+  chat_template_kwargs?: { enable_thinking: boolean };
 }
 
 export async function temporary(t: TestContext): Promise<string> {

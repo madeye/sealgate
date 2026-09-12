@@ -45,6 +45,11 @@ export async function providerSettings(
         : field === 'apiKeyEnv' && override === '' ? null : override;
     }
   }
+  const thinking = value('HECC_ENABLE_THINKING');
+  if (thinking !== undefined) {
+    if (thinking !== 'true' && thinking !== 'false') fail('HECC_ENABLE_THINKING must be true or false.');
+    effective.enableThinking = thinking === 'true';
+  }
   const validated = validateConfig(effective);
   return {
     config: validated,

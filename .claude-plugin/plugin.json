@@ -1,6 +1,6 @@
 {
   "name": "hecc",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": { "name": "Max Lv" },
   "license": "MIT",
   "description": "Session reminder for protecting sensitive prompt spans with the local hecc CLI"

@@ -29,13 +29,14 @@ export function endpointFor(baseUrl: string): URL {
 }
 
 export function validateConfig(config: unknown): Config {
-  const fields = ['version', 'baseUrl', 'model', 'apiKeyEnv', 'timeoutMs', 'detectionInstructions', 'additionalCategories'];
+  const fields = ['version', 'baseUrl', 'model', 'apiKeyEnv', 'timeoutMs', 'detectionInstructions', 'additionalCategories', 'enableThinking'];
   if (!isRecord(config) ||
       Object.keys(config).some(key => !fields.includes(key)) || config.version !== 1 ||
       typeof config.baseUrl !== 'string' ||
       typeof config.model !== 'string' || !config.model.trim() || config.model.length > 512 ||
       !(config.apiKeyEnv === null || (typeof config.apiKeyEnv === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(config.apiKeyEnv))) ||
       typeof config.timeoutMs !== 'number' || !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 300_000 ||
+      (config.enableThinking !== undefined && typeof config.enableThinking !== 'boolean') ||
       typeof config.detectionInstructions !== 'string' || !config.detectionInstructions.trim() || config.detectionInstructions.length > 32_768 ||
       !Array.isArray(config.additionalCategories) || config.additionalCategories.length > 100 ||
       config.additionalCategories.some(value => typeof value !== 'string' || !value.trim() || value.length > 1024)) {
@@ -50,6 +51,7 @@ export function validateConfig(config: unknown): Config {
     timeoutMs: config.timeoutMs,
     detectionInstructions: config.detectionInstructions,
     additionalCategories: config.additionalCategories,
+    ...(config.enableThinking === undefined ? {} : { enableThinking: config.enableThinking }),
   };
 }
 

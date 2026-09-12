@@ -7,12 +7,20 @@ import { providerSettings } from '../src/env.js';
 import { fail, HeccError } from '../src/errors.js';
 import { ProtectedChat } from '../src/chat.js';
 import { runTui } from '../src/tui.js';
+import { buildSandbox, launchClaude } from '../src/sandbox.js';
 
 const HELP = `Usage:
   hecc init --base-url URL --model MODEL [--api-key-env NAME | --no-api-key] [--timeout-ms N]
   hecc protect < prompt.txt
   hecc decrypt < protected.txt
   hecc chat [--model CLAUDE_MODEL]
+  hecc sandbox-build
+  hecc claude [--model CLAUDE_MODEL] [--print]
+
+claude runs the native Claude interface inside a Docker network sandbox, protecting
+complete model requests with the local gateway. Run sandbox-build once first.
+Uses your saved subscription login; sign in with claude auth login outside HECC.
+Other network traffic and opaque uploads are blocked. Requires native Linux Claude.
 
 chat opens a protected terminal conversation with Claude Code. Ctrl-S sends,
 Enter adds a line, Ctrl-C cancels the active turn or exits when idle.
@@ -49,8 +57,23 @@ async function main(): Promise<void> {
     process.stdout.write(HELP);
     return;
   }
-  if (command !== 'init' && command !== 'protect' && command !== 'decrypt' && command !== 'chat') fail('Expected hecc init, protect, decrypt, or chat. Use hecc --help.');
+  if (command === 'sandbox-build') {
+    if (args.length) fail('sandbox-build accepts no arguments.');
+    await buildSandbox(); return;
+  }
+  if (!['init', 'protect', 'decrypt', 'chat', 'claude'].includes(command)) fail('Expected a HECC command. Use hecc --help.');
   const dir = configDirectory();
+  if (command === 'claude') {
+    let values;
+    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' }, print: { type: 'boolean' } }, allowPositionals: false, strict: true })); }
+    catch { fail('Use hecc claude [--model CLAUDE_MODEL] [--print]. Prompts are accepted through the terminal or stdin only.'); }
+    if (values.model !== undefined && !/^[a-zA-Z0-9._:-]{1,128}$/.test(values.model)) fail('Invalid Claude model.');
+    const settings = await providerSettings(await loadConfig(dir));
+    const key = await loadKey(dir);
+    try { process.exitCode = await launchClaude(settings, key, dir, values); }
+    finally { key.fill(0); }
+    return;
+  }
   if (command === 'chat') {
     let values;
     try { ({ values } = parseArgs({ args, options: { model: { type: 'string' } }, allowPositionals: false, strict: true })); }

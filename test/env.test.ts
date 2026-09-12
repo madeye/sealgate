@@ -14,6 +14,7 @@ test('.env provider settings override config; exported settings override .env', 
     'HECC_BASE_URL=http://127.0.0.1:8080/v1',
     'HECC_MODEL="local model"',
     'HECC_TIMEOUT_MS=120000',
+    'HECC_ENABLE_THINKING=false',
     'HECC_API_KEY_ENV=LOCAL_TEST_TOKEN',
     'LOCAL_TEST_TOKEN="synthetic#credential"',
     'HECC_CONFIG_DIR=/must/not/move/key',
@@ -23,11 +24,14 @@ test('.env provider settings override config; exported settings override .env', 
   assert.equal(settings.config.baseUrl, 'http://127.0.0.1:8080/v1');
   assert.equal(settings.config.model, 'local model');
   assert.equal(settings.config.timeoutMs, 120000);
+  assert.equal(settings.config.enableThinking, false);
   assert.deepEqual(settings.env, { LOCAL_TEST_TOKEN: 'synthetic#credential' });
   assert.equal(Object.hasOwn(settings.config, 'HECC_CONFIG_DIR'), false);
   assert.equal(config.model, 'default');
-  const exported = await providerSettings(config, { cwd, env: { HECC_MODEL: 'exported-model', LOCAL_TEST_TOKEN: 'exported-key' } });
+  const exported = await providerSettings(config, { cwd, env: { HECC_MODEL: 'exported-model', LOCAL_TEST_TOKEN: 'exported-key', HECC_ENABLE_THINKING: 'true' } });
   assert.equal(exported.config.model, 'exported-model');
+  assert.equal(exported.config.enableThinking, true);
+  await assert.rejects(providerSettings(config, { cwd, env: { HECC_ENABLE_THINKING: 'no' } }), /true or false/);
   assert.equal(exported.env.LOCAL_TEST_TOKEN, 'exported-key');
 });
 

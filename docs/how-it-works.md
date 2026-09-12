@@ -2,8 +2,10 @@
 
 `hecc` separates sensitive-text detection from cryptography. A trusted model
 identifies which parts of a prompt should be hidden. The CLI encrypts those parts
-with a key stored on your machine. Claude Code receives the protected output,
-submitted automatically by `hecc chat` or pasted manually by you.
+with a key stored on your machine. In `hecc claude`, the local Claude process sees
+original text and the gateway protects the outgoing request. The older `hecc
+chat` and `hecc protect` workflows protect prompts before Claude receives them.
+See [the gateway guide](gateway.md) for complete request and network handling.
 
 The project is written in TypeScript, compiled into Node.js ES modules, and uses
 Node's built-in cryptography, HTTP client, and test runner. It has no runtime npm
@@ -17,6 +19,8 @@ dependencies.
 | `hecc protect` | Original UTF-8 text on stdin | Sends original text to the configured trusted provider | Prints text with detected spans encrypted |
 | `hecc decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
 | `hecc chat` | Prompts in a terminal editor | Detector, then Claude Code | Streams replies in a protected conversation |
+| `hecc sandbox-build` | No prompt | Downloads the container runtime | Builds the local sandbox image |
+| `hecc claude` | Native terminal UI or stdin with `--print` | Inspected model requests; other network traffic blocked | Native Claude with subscription OAuth and local tools |
 
 Protection and decryption accept multiline terminal input ending at EOF, or a file
 redirected to stdin. They reject prompt text in command-line arguments. A complete
@@ -83,7 +87,8 @@ Merged span:   ababa
 ```
 
 This avoids leaving a portion of an overlapping sensitive value exposed. Adjacent
-spans can remain separate. Repeated values receive independent ciphertext. An
+spans can remain separate. Manual preprocessing and chat give repeated values
+independent ciphertext; the gateway reuses ciphertext within a session. An
 empty detection list preserves the original input exactly.
 
 Validation confirms the detector returned usable spans. It cannot establish that
@@ -91,7 +96,7 @@ the detector found every secret. See [detection limits](security.md#detection-is
 
 ## Encrypting the matched text
 
-For every merged range, the CLI creates a fresh 12-byte random nonce and encrypts
+For every new encrypted span, the CLI creates a fresh 12-byte random nonce and encrypts
 the exact UTF-8 bytes with AES-256-GCM. It authenticates `hecc:v1` as additional
 authenticated data and obtains a 16-byte authentication tag.
 
@@ -144,7 +149,8 @@ answer. The hook does not read the original prompt, configuration, or key.
 
 Claude's [hook decision-control reference](https://code.claude.com/docs/en/hooks#decision-control)
 states that `UserPromptSubmit` cannot replace a submitted prompt. Consequently,
-automatic submission uses a separate terminal wrapper. Manual preprocessing and
+automatic request interception uses the gateway and isolated launcher. The older
+terminal wrapper supports prompt-only submission. Manual preprocessing and
 pasting are also supported. The plugin provides no decryption
 tool and never automatically restores plaintext into Claude's context.
 
@@ -203,6 +209,10 @@ Claude's own session persistence remains enabled for follow-up turns.
 | [`src/chat.ts`](../src/chat.ts) | Protection before submission and conversation lifecycle |
 | [`src/claude.ts`](../src/claude.ts) | Claude subprocess, protected stdin, streaming, cancellation |
 | [`src/tui.ts`](../src/tui.ts) | Terminal editor, protected transcript display, keyboard controls |
+| [`src/request-protection.ts`](../src/request-protection.ts) | Complete JSON inspection, ciphertext cache, signed-block replay ledger |
+| [`src/gateway.ts`](../src/gateway.ts) | OAuth-pinned HTTP gateway, allowed routes, streamed responses |
+| [`src/sandbox.ts`](../src/sandbox.ts) | Native Claude launcher, private login snapshot, Docker confinement |
+| [`sandbox/`](../sandbox/) | Isolated relay, container build, seccomp policy |
 | [`src/types.ts`](../src/types.ts) | Shared types and the runtime object guard |
 | [`scripts/session-start.ts`](../scripts/session-start.ts) | Claude session reminder |
 | [`test/`](../test/) | Synthetic tests and mock provider fixtures |

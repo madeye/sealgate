@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Deliberately reads neither the hook payload, local configuration, nor the key.
-const reminder = 'HECC: Use hecc chat in a separate local terminal to protect prompts automatically before sending them to Claude Code. For manual preprocessing, run hecc protect, finish input with EOF (Ctrl-D), and paste only its successful stdout. The configured trusted detection provider receives the original prompt. Detection can miss secrets. Only text passed through the helper is protected; direct input, files, tool results, and history are outside its scope.';
+const reminder = 'HECC: For complete model-request inspection, launch hecc claude from a separate local terminal after hecc sandbox-build. Its gateway protects detected text in prompts, context, history, and tool results; the Docker sandbox blocks other network traffic. This plugin alone cannot intercept or modify requests. The narrower hecc chat wrapper protects typed prompts only. For manual preprocessing, run hecc protect, finish input with EOF (Ctrl-D), and paste only successful stdout. The trusted detection provider receives original text and detection can miss secrets.';
 process.stdout.write(JSON.stringify({
   systemMessage: reminder,
   hookSpecificOutput: {
