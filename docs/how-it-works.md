@@ -1,0 +1,163 @@
+# How hecc works
+
+`hecc` separates sensitive-text detection from cryptography. A trusted model
+identifies which parts of a prompt should be hidden. The CLI encrypts those parts
+with a key stored on your machine. Claude Code receives only the output you paste.
+
+The project is written in TypeScript, compiled into Node.js ES modules, and uses
+Node's built-in cryptography, HTTP client, and test runner. It has no runtime npm
+dependencies.
+
+## The three commands
+
+| Command | Input | Network use | Result |
+| --- | --- | --- | --- |
+| `hecc init` | Provider options | None | Creates private configuration and a random local key |
+| `hecc protect` | Original UTF-8 text on stdin | Sends original text to the configured trusted provider | Prints text with detected spans encrypted |
+| `hecc decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
+
+Protection and decryption accept multiline terminal input ending at EOF, or a file
+redirected to stdin. They reject prompt text in command-line arguments. A complete
+result goes to stdout without an added newline; diagnostics go to stderr.
+
+## Initialization and provider settings
+
+Initialization generates a 32-byte key using the operating system's cryptographic
+random source. By default, the binary key and `config.json` live in
+`~/.config/hecc/`. The directory is mode `700`; files are mode `600`. The CLI checks
+ownership and permissions when loading them and rejects storage within Git
+repositories. Initialization never implicitly rotates an existing key.
+
+The configuration stores the provider base URL, model, credential environment
+variable name, timeout, detection instructions, and additional sensitive
+categories. `hecc protect` can override provider settings using `.env` in its
+current working directory. Exported environment variables take precedence over
+`.env`, which takes precedence over `config.json`.
+
+The `.env` file is parsed as data and must be a private regular file. Only provider
+settings and the configured credential are read; shell commands are not executed,
+and a `.env` setting cannot move the encryption key. See the
+[configuration instructions](../README.md#configure-a-trusted-provider) and
+[local vLLM example](../README.md#local-vllm-with-env).
+
+## Detection
+
+The CLI sends a nonstreaming `POST` request to the configured base URL with
+`/chat/completions` appended. The request contains the model name, a system message
+with detection rules, and a user message containing the original prompt. It asks
+for JSON object output:
+
+```json
+{
+  "sensitive_substrings": ["alex@example.test", "synthetic-password"]
+}
+```
+
+The provider API credential is sent as a Bearer header when configured. The local
+encryption key is never included. HTTPS is required for remote endpoints;
+loopback endpoints may use HTTP. Redirects are rejected. The configured timeout
+covers both waiting for headers and reading the response body.
+
+Default instructions cover credentials, personal identifiers, contact details,
+financial information, and explicitly marked confidential content. A local vLLM
+service serves the same role as any other compatible trusted detector. It does
+not encrypt or decrypt the spans.
+
+## Validating and locating spans
+
+The response must contain one complete assistant answer with valid JSON. The CLI
+rejects HTTP errors, refusals, truncated output, unexpected tool calls, and
+malformed results. The detection object must have exactly one field,
+`sensitive_substrings`, containing nonempty strings found exactly in the input.
+Unicode, whitespace, and line breaks must match without normalization.
+
+Each distinct substring is located at every occurrence, including occurrences
+that overlap. Ranges are sorted and overlapping ranges are merged. For example:
+
+```text
+Input:       x ababa y
+Detection:   ["aba", "bab"]
+Merged span:   ababa
+```
+
+This avoids leaving a portion of an overlapping sensitive value exposed. Adjacent
+spans can remain separate. Repeated values receive independent ciphertext. An
+empty detection list preserves the original input exactly.
+
+Validation confirms the detector returned usable spans. It cannot establish that
+the detector found every secret. See [detection limits](security.md#detection-is-not-a-guarantee).
+
+## Encrypting the matched text
+
+For every merged range, the CLI creates a fresh 12-byte random nonce and encrypts
+the exact UTF-8 bytes with AES-256-GCM. It authenticates `hecc:v1` as additional
+authenticated data and obtains a 16-byte authentication tag.
+
+The resulting marker has this format:
+
+```text
+[[HECC:v1:PAYLOAD]]
+
+PAYLOAD = base64url(nonce || authentication tag || ciphertext)
+```
+
+Base64url is canonical and unpadded. The version identifies this encoding and
+cryptographic construction. A fresh nonce means identical plaintext generally
+produces different markers, even with the same key.
+
+For example, a synthetic prompt could be transformed as follows. The ellipsis
+below is illustrative, not a valid ciphertext payload:
+
+```text
+Original:  Draft a reply to alex@example.test.
+Protected: Draft a reply to [[HECC:v1:...]].
+```
+
+The CLI assembles the entire output before printing it. If a later detection entry
+or encryption operation fails, it emits no partial prompt. Text outside matched
+ranges remains unchanged.
+
+## Decryption and authentication
+
+`hecc decrypt` loads only the local key. It does not load the provider's `.env`
+settings or contact a model. It finds each reserved `[[HECC:` marker, checks the
+version and encoding, extracts the nonce and tag, and authenticates the ciphertext
+before restoring UTF-8 text.
+
+An incorrect key or altered ciphertext causes failure. The entire result is
+buffered, so a later invalid marker prevents any earlier plaintext from being
+printed. Text without recognized markers passes through unchanged. The original
+prompt must not contain the reserved `[[HECC:` prefix; protection rejects it to
+avoid confusing ordinary text with ciphertext.
+
+Authentication applies to individual spans. It does not authenticate surrounding
+text, marker positions, or the completeness of a document.
+
+## Claude Code integration
+
+The plugin runs a small `SessionStart` hook that reminds the user to preprocess
+sensitive prompts in a separate terminal. It also tells Claude to treat markers
+as opaque, use the surrounding text, and explain when hidden values prevent an
+answer. The hook does not read the original prompt, configuration, or key.
+
+Claude's [hook decision-control reference](https://code.claude.com/docs/en/hooks#decision-control)
+states that `UserPromptSubmit` cannot replace a submitted prompt. Consequently,
+the user manually pastes protected output. The plugin provides no decryption
+tool and never automatically restores plaintext into Claude's context.
+
+## Source map
+
+| File | Responsibility |
+| --- | --- |
+| [`bin/hecc.ts`](../bin/hecc.ts) | CLI options, stdin, complete stdout results, sanitized errors |
+| [`src/config.ts`](../src/config.ts) | Configuration validation, private storage, key initialization |
+| [`src/env.ts`](../src/env.ts) | Provider overrides and credentials from `.env` |
+| [`src/provider.ts`](../src/provider.ts) | Trusted-provider HTTP request and response checks |
+| [`src/detection.ts`](../src/detection.ts) | Exact substring validation, occurrences, overlapping ranges |
+| [`src/crypto.ts`](../src/crypto.ts) | AES-GCM markers and authenticated local decryption |
+| [`src/types.ts`](../src/types.ts) | Shared types and the runtime object guard |
+| [`scripts/session-start.ts`](../scripts/session-start.ts) | Claude session reminder |
+| [`test/`](../test/) | Synthetic tests and mock provider fixtures |
+
+Run `npm run typecheck`, `npm test`, and `npm run validate:plugin` from the checkout.
+The test suite uses local mock providers, so it does not need real credentials.

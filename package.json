@@ -1,0 +1,40 @@
+{
+  "name": "hecc",
+  "version": "0.1.0",
+  "description": "Locally encrypt sensitive prompt spans before pasting into Claude Code",
+  "type": "module",
+  "bin": {
+    "hecc": "dist/bin/hecc.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "validate:plugin": "npm run build && claude plugin validate . --strict"
+  },
+  "files": [
+    "dist/bin/",
+    "dist/src/",
+    "dist/scripts/",
+    ".claude-plugin/",
+    "hooks/",
+    "docs/",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "Max Lv",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/madeye/hecc.git"
+  },
+  "private": true,
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "typescript": "7.0.2"
+  }
+}
