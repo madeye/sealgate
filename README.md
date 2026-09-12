@@ -1,5 +1,7 @@
 # hecc
 
+**[Read the website and getting-started guide →](https://madeye.github.io/hecc/)**
+
 Encrypt sensitive text before Claude Code sends it remotely. `hecc claude` keeps
 Claude's native terminal interface and subscription login, with a local gateway
 that inspects complete model requests and a Docker sandbox that blocks other
@@ -369,6 +371,16 @@ Relative imports use `.js` extensions to match the compiled Node.js modules.
 `dist/` is generated and Git-ignored. `npm pack` builds automatically and includes
 only the compiled runtime, plugin files, and documentation, excluding tests,
 development sources, `.env`, and local keys.
+
+## Website
+
+The [GitHub Pages site](https://madeye.github.io/hecc/) is a static usage and
+architecture guide. Its source lives in `site/` and needs no build tools,
+JavaScript, external fonts, or analytics. Preview it with
+`python3 -m http.server 4173 --directory site`, then open `http://localhost:4173`.
+Changes to `site/` on `main` deploy through `.github/workflows/pages.yml`; the
+workflow uploads only that directory. Keep the website examples in sync with
+the CLI and the detailed guides in `docs/`.
 
 ## License
 
