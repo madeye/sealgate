@@ -10,7 +10,7 @@ participant receives and the limits to consider when using the output.
 | --- | --- | --- | --- | --- |
 | Your local CLI | Yes | During protection | Yes | Yes |
 | Trusted detection endpoint | Yes | When authentication is enabled | No | Not sent by hecc |
-| Claude Code | Only if you send it separately | Not sent by hecc | Not sent by hecc | When you paste it |
+| Claude Code | Only if you send it separately | Not sent by hecc | Not sent by hecc | Sent by hecc chat, or pasted by you |
 
 Choose a detection provider that you trust with the entire original prompt. A
 local vLLM service can keep detection on your machine, but its own logs and access
@@ -57,6 +57,17 @@ guidance, not an access-control boundary. A tool running as your user may still
 read your files. Run decryption yourself in a separate terminal, and use OS-level
 isolation if local agent access is a threat you need to prevent.
 
+`hecc chat` passes only protected prompts to the Claude child through stdin and
+removes detector credentials from its inherited environment. It does not sanitize
+Claude's workspace files, hooks, MCP servers, or other context. Print mode uses
+your normal Claude configuration, with new tool approvals denied by `dontAsk`.
+Run it from a project you trust. The wrapper does not provide an OS sandbox.
+
+The TUI's original prompt is visible in its local draft editor until protection
+succeeds. Only the protected display is retained in its in-memory conversation.
+The wrapper does not save a transcript, but Claude can save its own protected
+session history, and terminal recording software may capture your draft.
+
 Terminal input is echoed. Scrollback, copied text, redirected files, backups,
 provider logs, and clipboard contents can retain plaintext. JavaScript strings
 cannot be reliably zeroized. This version does not protect against a compromised
@@ -77,7 +88,7 @@ the exit code when scripting, and copy only a successful protected result.
 Direct Claude input, source files, tool results, existing history, and other
 network traffic remain outside this version. No gateway intercepts Claude's
 requests, and no submission hook rewrites them. Only text passed through
-`hecc protect` is processed.
+`hecc protect` or submitted through `hecc chat` is processed.
 
 See the [usage guide](../README.md) for configuration, local decryption, backups,
 and limits, and [how it works](how-it-works.md) for the marker construction.

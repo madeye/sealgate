@@ -5,11 +5,17 @@ import { protectText, decryptText, validatePrompt } from '../src/crypto.js';
 import { detectSensitive } from '../src/provider.js';
 import { providerSettings } from '../src/env.js';
 import { fail, HeccError } from '../src/errors.js';
+import { ProtectedChat } from '../src/chat.js';
+import { runTui } from '../src/tui.js';
 
 const HELP = `Usage:
   hecc init --base-url URL --model MODEL [--api-key-env NAME | --no-api-key] [--timeout-ms N]
   hecc protect < prompt.txt
   hecc decrypt < protected.txt
+  hecc chat [--model CLAUDE_MODEL]
+
+chat opens a protected terminal conversation with Claude Code. Ctrl-S sends,
+Enter adds a line, Ctrl-C cancels the active turn or exits when idle.
 
 protect and decrypt accept UTF-8 text only through stdin. In a terminal, enter
 multiple lines and finish with Ctrl-D (EOF). Input is echoed by your terminal.
@@ -43,8 +49,20 @@ async function main(): Promise<void> {
     process.stdout.write(HELP);
     return;
   }
-  if (command !== 'init' && command !== 'protect' && command !== 'decrypt') fail('Expected hecc init, protect, or decrypt. Use hecc --help.');
+  if (command !== 'init' && command !== 'protect' && command !== 'decrypt' && command !== 'chat') fail('Expected hecc init, protect, decrypt, or chat. Use hecc --help.');
   const dir = configDirectory();
+  if (command === 'chat') {
+    let values;
+    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' } }, allowPositionals: false, strict: true })); }
+    catch { fail('Invalid chat options. Use hecc chat [--model CLAUDE_MODEL].'); }
+    if (values.model !== undefined && !values.model.trim()) fail('Claude model must not be empty.');
+    if (!process.stdin.isTTY || !process.stdout.isTTY) fail('hecc chat requires an interactive terminal. Use hecc protect for piped input.');
+    const settings = await providerSettings(await loadConfig(dir));
+    const key = await loadKey(dir);
+    try { await runTui(new ProtectedChat(settings, key, { model: values.model })); }
+    finally { key.fill(0); }
+    return;
+  }
   if (command === 'init') {
     let values;
     try {

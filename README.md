@@ -3,7 +3,8 @@
 Encrypt sensitive spans locally before pasting a prompt into Claude Code. `hecc`
 sends your original text to a **trusted detection provider** that you configure,
 then uses a local AES-256-GCM key to replace the detected spans with ciphertext.
-The companion Claude Code plugin adds a session reminder about this workflow.
+`hecc chat` provides a terminal interface that protects each prompt and sends it
+to Claude Code automatically. The companion plugin adds a session reminder.
 
 This is conventional authenticated encryption, **not homomorphic inference**.
 Claude can use the surrounding text but cannot understand encrypted values.
@@ -15,7 +16,7 @@ flowchart LR
     P -->|Exact sensitive substrings| C
     K[Local encryption key] --> C
     C -->|Text with encrypted spans| O[Protected output]
-    O -->|You paste| A[Claude Code]
+    O -->|hecc chat sends, or you paste| A[Claude Code]
     O --> D[hecc decrypt locally]
     K --> D
     D --> R[Restored text in your terminal]
@@ -144,6 +145,57 @@ out of prompts and source control.
 
 ## Protect a prompt
 
+### Automatic terminal chat
+
+After initializing `hecc` and configuring your trusted detector, run:
+
+```sh
+hecc chat
+```
+
+This opens a full-screen terminal interface. Enter a prompt, then press **Ctrl-S**
+to detect and encrypt sensitive spans and send the protected result to Claude
+Code. Replies stream into the conversation. Follow-up prompts go through the same
+protection step and continue the wrapper's own Claude session.
+
+| Key or command | Action |
+| --- | --- |
+| Ctrl-S | Protect and send the current draft |
+| Enter | Insert a newline |
+| Left / Right, Home / End | Move within the draft |
+| Ctrl-U | Clear the draft |
+| Ctrl-C | Cancel the current request; exit when idle |
+| Ctrl-D | Exit, canceling an active request |
+| Page Up / Page Down | Scroll the conversation |
+| `/new`, then Ctrl-S | Start a fresh conversation |
+| `/quit`, then Ctrl-S | Exit |
+
+Pasting multiline text does not submit it. The conversation displays encrypted
+spans as `[encrypted]` for readability; the full ciphertext markers are sent to
+Claude. Plaintext is visible in the local draft editor. `hecc` keeps no chat log
+on disk and does not decrypt replies. Claude Code may persist the protected
+conversation according to its own settings.
+
+The `claude` command must be installed and signed in (`claude auth status`). If
+Claude reports an expired token, run `claude auth login` outside the wrapper. Use
+`hecc chat --model MODEL` to select Claude's model; the detector model stays in
+your provider settings. `.env` is loaded from the directory where you start the
+wrapper. Run it in a trusted project directory, since Claude Code loads its normal
+project context and configuration.
+
+The wrapper uses Claude's print mode with `dontAsk` permissions. Existing allowed
+tools can run, but tool calls requiring a new approval are denied. There is no
+interactive permission dialog, slash-command forwarding, or file/image picker in
+this version. The wrapper never enables permission bypass. Files, tool results,
+and existing project context are not processed by the detector.
+
+Detection failures keep the local draft for editing and never start Claude. A
+canceled or failed Claude turn resets the wrapper's session to avoid silently
+continuing an incomplete conversation. See [terminal chat internals](docs/how-it-works.md#terminal-chat)
+for streaming, session handling, and credential isolation.
+
+### Manual preprocessing
+
 Run this in **your own terminal, outside Claude's tools**:
 
 ```sh
@@ -221,8 +273,9 @@ input, files, tool results, existing history, and other provider traffic are
 outside this version. Claude's
 [hook decision-control documentation](https://code.claude.com/docs/en/hooks#decision-control)
 specifies that `UserPromptSubmit` cannot replace a submitted prompt, so the plugin
-uses only a `SessionStart` reminder. No gateway or Claude authentication changes
-are required.
+uses only a `SessionStart` reminder. Automatic submission happens in the `hecc
+chat` wrapper before Claude is invoked. No gateway or Claude authentication
+changes are required.
 
 Detection is probabilistic: a provider can miss secrets, misunderstand your
 categories, or follow malicious instructions embedded in input. Output validation
@@ -253,6 +306,8 @@ overlap, Unicode, multiline input, no matches, key permissions, encryption
 randomness, tampering, request construction, redirects, timeouts, invalid provider
 responses, failure output, offline decryption, and the session hook. Plugin
 validation requires the Claude Code CLI. No live provider is needed for tests.
+Chat tests also use a mock Claude process to check protected stdin, session
+continuity, credential isolation, streaming, cancellation, and failure handling.
 
 Source files live in `src/`, `bin/`, `scripts/`, and `test/`. Strict TypeScript
 checking covers all four directories. Run `npm run build` after editing source;

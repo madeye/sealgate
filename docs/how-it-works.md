@@ -2,19 +2,21 @@
 
 `hecc` separates sensitive-text detection from cryptography. A trusted model
 identifies which parts of a prompt should be hidden. The CLI encrypts those parts
-with a key stored on your machine. Claude Code receives only the output you paste.
+with a key stored on your machine. Claude Code receives the protected output,
+submitted automatically by `hecc chat` or pasted manually by you.
 
 The project is written in TypeScript, compiled into Node.js ES modules, and uses
 Node's built-in cryptography, HTTP client, and test runner. It has no runtime npm
 dependencies.
 
-## The three commands
+## Commands
 
 | Command | Input | Network use | Result |
 | --- | --- | --- | --- |
 | `hecc init` | Provider options | None | Creates private configuration and a random local key |
 | `hecc protect` | Original UTF-8 text on stdin | Sends original text to the configured trusted provider | Prints text with detected spans encrypted |
 | `hecc decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
+| `hecc chat` | Prompts in a terminal editor | Detector, then Claude Code | Streams replies in a protected conversation |
 
 Protection and decryption accept multiline terminal input ending at EOF, or a file
 redirected to stdin. They reject prompt text in command-line arguments. A complete
@@ -142,8 +144,51 @@ answer. The hook does not read the original prompt, configuration, or key.
 
 Claude's [hook decision-control reference](https://code.claude.com/docs/en/hooks#decision-control)
 states that `UserPromptSubmit` cannot replace a submitted prompt. Consequently,
-the user manually pastes protected output. The plugin provides no decryption
+automatic submission uses a separate terminal wrapper. Manual preprocessing and
+pasting are also supported. The plugin provides no decryption
 tool and never automatically restores plaintext into Claude's context.
+
+## Terminal chat
+
+`hecc chat` runs a full-screen terminal editor using Node's terminal and readline
+primitives. Enter inserts newlines; Ctrl-S submits the draft. Pasted text stays in
+the editor until submitted. The UI uses the terminal's alternate screen and
+restores normal input and display settings when it exits.
+
+On submission, the wrapper passes the draft through the same detector, span
+validation, and local encryption as `hecc protect`. It launches Claude only after
+that step succeeds. The original draft is then removed from the editor, and the
+conversation displays a protected version with `[encrypted]` labels. This is a
+display abbreviation; the full ciphertext is sent to Claude through stdin.
+
+The wrapper invokes the installed `claude` binary directly, without a shell,
+using print mode and streamed JSON output. It displays assistant text deltas and
+checks for a successful final result. Raw stderr and malformed response bodies
+are not shown. Terminal control characters in text are removed before rendering.
+The [Claude programmatic usage guide](https://code.claude.com/docs/en/headless)
+describes the underlying streaming protocol and session controls.
+
+Each wrapper conversation starts with a fresh UUID. Later turns resume only
+that session, never the most recent unrelated conversation. `/new` creates a
+fresh session. Detection errors retain the current session; a failed or canceled
+Claude turn resets it because Claude may have saved an incomplete turn.
+
+The detector's configured credential and all `HECC_*` environment variables are
+removed from the Claude child environment. The local key is never sent through
+stdin or command-line arguments. Claude keeps its normal authentication and
+project context. This is process-input separation, not filesystem isolation: a
+permitted tool may still read files belonging to the same OS user.
+
+The wrapper uses `dontAsk` permission mode. It does not approve new tool requests
+or offer a permission dialog. Tool requests that are not already allowed are
+denied and counted in the completion status. Native Claude slash commands, file
+attachments, and resuming a wrapper session after exit are not implemented.
+
+Ctrl-C cancels detection or terminates the active Claude process group. A process
+that does not exit after termination is killed after two seconds. A Claude turn
+has a ten-minute timeout; detection uses the provider's configured timeout. Ctrl-D
+exits after canceling active work. No plaintext chat log is created by hecc;
+Claude's own session persistence remains enabled for follow-up turns.
 
 ## Source map
 
@@ -155,6 +200,9 @@ tool and never automatically restores plaintext into Claude's context.
 | [`src/provider.ts`](../src/provider.ts) | Trusted-provider HTTP request and response checks |
 | [`src/detection.ts`](../src/detection.ts) | Exact substring validation, occurrences, overlapping ranges |
 | [`src/crypto.ts`](../src/crypto.ts) | AES-GCM markers and authenticated local decryption |
+| [`src/chat.ts`](../src/chat.ts) | Protection before submission and conversation lifecycle |
+| [`src/claude.ts`](../src/claude.ts) | Claude subprocess, protected stdin, streaming, cancellation |
+| [`src/tui.ts`](../src/tui.ts) | Terminal editor, protected transcript display, keyboard controls |
 | [`src/types.ts`](../src/types.ts) | Shared types and the runtime object guard |
 | [`scripts/session-start.ts`](../scripts/session-start.ts) | Claude session reminder |
 | [`test/`](../test/) | Synthetic tests and mock provider fixtures |

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Deliberately reads neither the hook payload, local configuration, nor the key.
-const reminder = 'HECC: Before submitting sensitive text, run hecc protect in a separate local terminal, finish input with EOF (Ctrl-D), and paste only its successful stdout into Claude Code. The configured trusted detection provider receives the original prompt. Detection can miss secrets. Only text passed through the helper is protected; direct input, files, tool results, and history are outside its scope.';
+const reminder = 'HECC: Use hecc chat in a separate local terminal to protect prompts automatically before sending them to Claude Code. For manual preprocessing, run hecc protect, finish input with EOF (Ctrl-D), and paste only its successful stdout. The configured trusted detection provider receives the original prompt. Detection can miss secrets. Only text passed through the helper is protected; direct input, files, tool results, and history are outside its scope.';
 process.stdout.write(JSON.stringify({
   systemMessage: reminder,
   hookSpecificOutput: {
