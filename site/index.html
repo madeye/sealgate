@@ -254,7 +254,7 @@ sealgate claude</code></pre>
             <div class="flow-node">
               <span class="node-icon" aria-hidden="true">&gt;_</span>
               <h3>Native Claude</h3>
-              <p>Terminal, context,<br />history, local tools</p>
+              <p>Terminal, context,<br /> history, local tools</p>
               <span class="node-tag">OS SANDBOX</span>
             </div>
             <div class="flow-arrow" aria-hidden="true">
@@ -263,8 +263,19 @@ sealgate claude</code></pre>
             <div class="flow-node gateway-node">
               <span class="node-icon" aria-hidden="true">[h]</span>
               <h3>SEALGATE gateway</h3>
-              <p>Inspect fields.<br />Encrypt matched spans.</p>
+              <p>Inspect fields.<br /> Encrypt matched spans.</p>
               <span class="node-tag">HOST PROCESS</span>
+            </div>
+            <div class="detector-branch">
+              <span aria-hidden="true">↕&#xfe0e;</span>
+              <div>
+                <strong>Trusted vLLM + local encryption key</strong>
+                <p>
+                  vLLM identifies exact sensitive substrings. Node performs
+                  AES-256-GCM encryption. The key is never sent to either
+                  provider.
+                </p>
+              </div>
             </div>
             <div class="flow-arrow" aria-hidden="true">
               →<small>protected request</small>
@@ -272,19 +283,8 @@ sealgate claude</code></pre>
             <div class="flow-node remote-node">
               <span class="node-icon" aria-hidden="true">↗</span>
               <h3>Anthropic</h3>
-              <p>Surrounding text<br />and opaque ciphertext</p>
+              <p>Surrounding text<br /> and opaque ciphertext</p>
               <span class="node-tag">REMOTE SERVICE</span>
-            </div>
-          </div>
-          <div class="detector-branch">
-            <span aria-hidden="true">↕</span>
-            <div>
-              <strong>Trusted vLLM + local encryption key</strong>
-              <p>
-                vLLM identifies exact sensitive substrings. Node performs
-                AES-256-GCM encryption. The key is never sent to either
-                provider.
-              </p>
             </div>
           </div>
           <figcaption>
