@@ -16,7 +16,8 @@
     "prepack": "npm run build",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:sandbox": "npm run build && SEALGATE_TEST_DOCKER=1 node --test dist/test/sandbox.test.js",
-    "validate:plugin": "npm run build && claude plugin validate . --strict"
+    "validate:plugin": "npm run build && claude plugin validate . --strict",
+    "test:seatbelt": "npm run build && SEALGATE_TEST_SEATBELT=1 node --test dist/test/seatbelt.test.js"
   },
   "files": [
     "dist/bin/",

@@ -1,0 +1,68 @@
+;; SEALGATE macOS sandbox profile for native Claude Code.
+;; Host-specific values arrive only as sandbox-exec -D parameters:
+;;   WORKSPACE     project directory (read-write)
+;;   RUNTIME       per-launch directory: temporary HOME, TMPDIR, this profile
+;;   BIN           the native Claude binary
+;;   KEYDIR        SEALGATE configuration and key directory (hidden)
+;;   USER_FOLDERS  the per-user /private/var/folders tree (hidden except RUNTIME)
+;;   TEMP          the per-user temporary directory
+;; The launcher inserts network and opt-in read rules at the marker below.
+;; Later, more specific rules win over earlier ones.
+(version 1)
+(deny default)
+
+;; Process basics. Setuid programs (ps, sudo) cannot start under any Seatbelt profile.
+(allow process-exec)
+(allow process-fork)
+(allow process-info* (target same-sandbox))
+(allow signal (target same-sandbox))
+(allow mach-priv-task-port (target same-sandbox))
+(allow pseudo-tty)
+(allow dynamic-code-generation)
+(allow file-map-executable)
+(allow ipc-posix-shm)
+(allow ipc-posix-sem)
+(allow user-preference-read)
+(allow iokit-get-properties)
+(allow sysctl-read)
+(deny sysctl-read (sysctl-name-prefix "kern.procargs"))
+(allow sysctl-write (sysctl-name "kern.tcsm_enable"))
+(allow file-ioctl
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")
+  (literal "/dev/dtracehelper") (literal "/dev/tty") (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$"))
+
+;; Mach services needed by the runtime. Keychain (SecurityServer, securityd),
+;; LaunchServices (`open`), Apple Events, pasteboard, nsurlsessiond and DNS
+;; services are deliberately absent, as are lsopen, appleevent-send,
+;; job-creation and mach-register.
+(allow mach-lookup
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.logd")
+  (global-name "com.apple.system.notification_center")
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.bsd.dirhelper")
+  (global-name "com.apple.lsd.mapdb")
+  (global-name "com.apple.distributed_notifications@Uv3")
+  (global-name "com.apple.fonts")
+  (global-name "com.apple.FontObjectsServer")
+  (global-name "com.apple.PowerManagement.control")
+  (global-name "com.apple.audio.systemsoundserver"))
+
+;; Files: system trees are readable; user data roots are hidden except the
+;; project, the runtime directory, the Claude binary and opt-in paths.
+(allow file-read*)
+(allow file-read-metadata (vnode-type DIRECTORY))
+(deny file-read* (subpath "/Users") (subpath "/Volumes") (subpath (param "USER_FOLDERS")))
+(allow file-read*
+  (subpath (param "WORKSPACE")) (subpath (param "RUNTIME")) (literal (param "BIN")) (subpath "/private/tmp"))
+(allow file-write*
+  (subpath (param "WORKSPACE")) (subpath (param "RUNTIME")) (subpath "/private/tmp")
+  (literal "/dev/null") (literal "/dev/tty") (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$")
+  (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/fd/[0-9]+$"))
+
+;; @@EXTRA_RULES@@
+
+;; Hidden even inside allowed trees. Denying writes too defeats ln, mv and cp -c.
+(deny file-read* file-write* (subpath (param "KEYDIR")))
+(deny file-read* file-write* (literal (string-append (param "WORKSPACE") "/.env")))

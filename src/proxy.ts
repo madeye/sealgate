@@ -160,3 +160,9 @@ export async function startProxyForwarder(proxy: URL, listen: { socketPath: stri
     },
   };
 }
+
+/** The proxy a sandboxed client may use: HTTPS_PROXY first, then HTTP_PROXY. */
+export function proxyFromEnvironment(env: Environment = process.env): URL | undefined {
+  const value = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].map(name => env[name]).find(candidate => candidate);
+  return value ? parseProxyUrl(value) : undefined;
+}

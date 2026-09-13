@@ -29,7 +29,7 @@ export function endpointFor(baseUrl: string): URL {
 }
 
 export function validateConfig(config: unknown): Config {
-  const fields = ['version', 'baseUrl', 'model', 'apiKeyEnv', 'timeoutMs', 'detectionInstructions', 'additionalCategories', 'enableThinking'];
+  const fields = ['version', 'baseUrl', 'model', 'apiKeyEnv', 'timeoutMs', 'detectionInstructions', 'additionalCategories', 'enableThinking', 'sandboxReadPaths'];
   if (!isRecord(config) ||
       Object.keys(config).some(key => !fields.includes(key)) || config.version !== 1 ||
       typeof config.baseUrl !== 'string' ||
@@ -37,6 +37,8 @@ export function validateConfig(config: unknown): Config {
       !(config.apiKeyEnv === null || (typeof config.apiKeyEnv === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(config.apiKeyEnv))) ||
       typeof config.timeoutMs !== 'number' || !Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 300_000 ||
       (config.enableThinking !== undefined && typeof config.enableThinking !== 'boolean') ||
+      (config.sandboxReadPaths !== undefined && (!Array.isArray(config.sandboxReadPaths) || config.sandboxReadPaths.length > 32 ||
+        config.sandboxReadPaths.some(value => typeof value !== 'string' || !path.isAbsolute(value) || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)))) ||
       typeof config.detectionInstructions !== 'string' || !config.detectionInstructions.trim() || config.detectionInstructions.length > 32_768 ||
       !Array.isArray(config.additionalCategories) || config.additionalCategories.length > 100 ||
       config.additionalCategories.some(value => typeof value !== 'string' || !value.trim() || value.length > 1024)) {
@@ -52,6 +54,7 @@ export function validateConfig(config: unknown): Config {
     detectionInstructions: config.detectionInstructions,
     additionalCategories: config.additionalCategories,
     ...(config.enableThinking === undefined ? {} : { enableThinking: config.enableThinking }),
+    ...(config.sandboxReadPaths === undefined ? {} : { sandboxReadPaths: config.sandboxReadPaths }),
   };
 }
 

@@ -15,12 +15,14 @@ const HELP = `Usage:
   sealgate decrypt < protected.txt
   sealgate chat [--model CLAUDE_MODEL]
   sealgate sandbox-build
-  sealgate claude [--model CLAUDE_MODEL] [--print]
+  sealgate claude [--model CLAUDE_MODEL] [--print] [--proxy-egress]
 
-claude runs the native Claude interface inside a Docker network sandbox, protecting
-complete model requests with the local gateway. Run sandbox-build once first.
-Uses your saved subscription login; sign in with claude auth login outside SEALGATE.
-Other network traffic and opaque uploads are blocked. Requires native Linux Claude.
+claude runs the native Claude interface inside an OS sandbox (macOS Seatbelt, or
+Docker on Linux after sandbox-build), protecting complete model requests with the
+local gateway. Uses your saved subscription login; sign in with claude auth login
+outside SEALGATE. Other network traffic and opaque uploads are blocked. The gateway
+honors HTTPS_PROXY/HTTP_PROXY/NO_PROXY. --proxy-egress additionally lets Claude's
+tools reach that proxy; such traffic is not inspected.
 
 chat opens a protected terminal conversation with Claude Code. Ctrl-S sends,
 Enter adds a line, Ctrl-C cancels the active turn or exits when idle.
@@ -65,12 +67,12 @@ async function main(): Promise<void> {
   const dir = configDirectory();
   if (command === 'claude') {
     let values;
-    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' }, print: { type: 'boolean' } }, allowPositionals: false, strict: true })); }
-    catch { fail('Use sealgate claude [--model CLAUDE_MODEL] [--print]. Prompts are accepted through the terminal or stdin only.'); }
+    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' }, print: { type: 'boolean' }, 'proxy-egress': { type: 'boolean' } }, allowPositionals: false, strict: true })); }
+    catch { fail('Use sealgate claude [--model CLAUDE_MODEL] [--print] [--proxy-egress]. Prompts are accepted through the terminal or stdin only.'); }
     if (values.model !== undefined && !/^[a-zA-Z0-9._:-]{1,128}$/.test(values.model)) fail('Invalid Claude model.');
     const settings = await providerSettings(await loadConfig(dir));
     const key = await loadKey(dir);
-    try { process.exitCode = await launchClaude(settings, key, dir, values); }
+    try { process.exitCode = await launchClaude(settings, key, dir, { model: values.model, print: values.print, proxyEgress: values['proxy-egress'] }); }
     finally { key.fill(0); }
     return;
   }
