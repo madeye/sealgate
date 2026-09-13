@@ -5,6 +5,10 @@ import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { isElf, isMachO, loadSubscription, prepareRuntime } from '../src/launcher.js';
 import type { Runtime } from '../src/launcher.js';
 import { extraRules, seatbeltParams, buildProfile, runSeatbelt } from '../src/seatbelt.js';
@@ -66,6 +70,16 @@ test('profile parameters are validated and never interpolated; extra rules refer
   await assert.rejects(seatbeltParams({ ...options, readPaths: [path.join(keyDir, 'missing')] }), /does not exist/);
   await assert.rejects(seatbeltParams({ ...options, workspace: homedir() }), /home directory/);
   await assert.rejects(seatbeltParams({ ...options, workspace: path.dirname(homedir()) }), /home directory/);
+});
+
+test('session supervisor refuses to launch a command outside its sandbox even with IPC', async t => {
+  const workspace = await temporary(t);
+  const child = spawn(process.execPath, [
+    fileURLToPath(new URL('../scripts/seatbelt-supervisor.js', import.meta.url)),
+    '/bin/sh', '-c', 'echo unexpected > launched.txt',
+  ], { cwd: workspace, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  assert.deepEqual(await once(child, 'close'), [1, null]);
+  await assert.rejects(readFile(path.join(workspace, 'launched.txt')), { code: 'ENOENT' });
 });
 
 async function claudeBinary(): Promise<string> {
@@ -200,4 +214,53 @@ test('native Claude end-to-end under Seatbelt with mock upstream includes file a
     assert.ok(detected.includes(secret), 'native context reached detector');
     assert.ok(bodies.every(body => !body.includes(secret)), 'plaintext excluded from upstream');
   }
+});
+
+test('Seatbelt reaps detached double-fork tools without touching other sessions or host processes', { ...gated, timeout: 15000 }, async t => {
+  const workspace = await realpath(await temporary(t)); const keyDir = await temporary(t);
+  const runtime = await sandboxRuntime(t, workspace);
+  const otherWorkspace = await realpath(await temporary(t));
+  const otherRuntime = await sandboxRuntime(t, otherWorkspace);
+  const other = runSeatbelt({ workspace: otherWorkspace, runtime: otherRuntime, keyDir, binary: process.execPath,
+    readPaths: [], gatewayPort: 1, command: ['/bin/sh', '-c', 'sleep 3; echo alive > other.txt'] });
+  const host = spawn('/bin/sleep', ['10'], { stdio: 'ignore' });
+  t.after(() => host.kill());
+  const detached = `const c=require('node:child_process').spawn('/bin/sh',
+    ['-c','echo ready > ready.txt; sleep 2; echo escaped > escaped.txt'],
+    {detached:true,stdio:'ignore',env:{}});c.unref();`;
+  const root = `const cp=require('node:child_process'),fs=require('node:fs');
+    cp.spawnSync(${JSON.stringify(process.execPath)},['-e',${JSON.stringify(detached)}]);
+    const deadline=Date.now()+3000;
+    while(!fs.existsSync('ready.txt')&&Date.now()<deadline){}
+    process.exit(fs.existsSync('ready.txt')?7:8);`;
+  assert.equal(await runSeatbelt({ workspace, runtime, keyDir, binary: process.execPath, readPaths: [], gatewayPort: 1,
+    command: [process.execPath, '-e', root] }), 7);
+  assert.equal(await other, 0);
+  assert.equal(await readFile(path.join(otherWorkspace, 'other.txt'), 'utf8'), 'alive\n');
+  assert.equal(host.exitCode, null); assert.equal(host.signalCode, null);
+  await assert.rejects(readFile(path.join(workspace, 'escaped.txt')), { code: 'ENOENT' });
+});
+
+test('Seatbelt cancellation reaps detached tools even when the client ignores SIGTERM', { ...gated, timeout: 15000 }, async t => {
+  const workspace = await realpath(await temporary(t)); const keyDir = await temporary(t);
+  const runtime = await sandboxRuntime(t, workspace);
+  const client = `const c=require('node:child_process').spawn('/bin/sh',
+    ['-c','echo ready > ready.txt; sleep 4; echo escaped > escaped.txt'],{detached:true,stdio:'ignore'});
+    c.unref();process.on('SIGTERM',()=>{});setTimeout(()=>process.exit(0),8000);`;
+  const options = { workspace, runtime, keyDir, binary: process.execPath, readPaths: [], gatewayPort: 1,
+    command: [process.execPath, '-e', client] };
+  const harness = spawn(process.execPath, ['--input-type=module', '-e',
+    `import {runSeatbelt} from ${JSON.stringify(new URL('../src/seatbelt.js', import.meta.url).href)};
+     process.exitCode=await runSeatbelt(JSON.parse(process.argv[1]));`, JSON.stringify(options)], { stdio: 'ignore' });
+  t.after(() => harness.kill('SIGTERM'));
+  const closed = once(harness, 'close');
+  const deadline = Date.now() + 4000;
+  while (true) {
+    try { await readFile(path.join(workspace, 'ready.txt')); break; }
+    catch { assert.ok(Date.now() < deadline, 'client did not start'); await delay(25); }
+  }
+  harness.kill('SIGTERM');
+  assert.deepEqual(await closed, [143, null]);
+  await delay(4200);
+  await assert.rejects(readFile(path.join(workspace, 'escaped.txt')), { code: 'ENOENT' });
 });

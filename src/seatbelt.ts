@@ -3,7 +3,8 @@ import { constants } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fail } from './errors.js';
-import { CLAUDE_ARGS, claudeEnvironment, foreground, sandboxDirectory } from './launcher.js';
+import { CLAUDE_ARGS, claudeEnvironment, sandboxDirectory } from './launcher.js';
+import { supervisedSeatbelt } from './seatbelt-supervisor.js';
 import type { Runtime } from './launcher.js';
 
 export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
@@ -50,6 +51,7 @@ export async function seatbeltParams(options: SeatbeltOptions): Promise<Record<s
   const params: Record<string, string> = {
     WORKSPACE: workspace, RUNTIME: await realpath(options.runtime.dir), BIN: await realpath(options.binary),
     KEYDIR: await realpath(options.keyDir), USER_FOLDERS: perUser, TEMP: temp,
+    NODE: await realpath(process.execPath),
   };
   const claudeDir = path.join(home, '.claude');
   if (options.readPaths.length > 32) fail('Too many sandboxReadPaths entries.');
@@ -95,7 +97,8 @@ export async function runSeatbelt(options: SeatbeltOptions): Promise<number> {
   await writeFile(profile, await buildProfile(params, options.gatewayPort, options.proxyPort), { mode: 0o600 });
   const args = ['-f', profile];
   for (const [name, value] of Object.entries(params)) args.push('-D', `${name}=${value}`);
-  args.push('--', ...(options.command ?? [options.binary, ...CLAUDE_ARGS]));
+  const supervisor = await readFile(new URL('../scripts/seatbelt-supervisor.js', import.meta.url), 'utf8');
+  args.push('--', params.NODE, '--input-type=module', '--eval', supervisor, '--', ...(options.command ?? [options.binary, ...CLAUDE_ARGS]));
   if (!options.command) {
     if (options.model) args.push('--model', options.model);
     if (options.print) args.push('--print');
@@ -108,5 +111,5 @@ export async function runSeatbelt(options: SeatbeltOptions): Promise<number> {
     ...claudeEnvironment(`http://127.0.0.1:${options.gatewayPort}`, options.proxyPort === undefined ? undefined : `http://127.0.0.1:${options.proxyPort}`),
   };
   for (const name of ['COLORTERM', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION']) { const value = process.env[name]; if (value) env[name] = value; }
-  return foreground(SANDBOX_EXEC, args, { env, cwd: params.WORKSPACE });
+  return supervisedSeatbelt(SANDBOX_EXEC, args, env, params.WORKSPACE);
 }

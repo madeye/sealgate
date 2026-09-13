@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer as createHttpsServer } from 'node:https';
-import { connect } from 'node:net';
+import { connect, createServer as createTcpServer } from 'node:net';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
+import { once } from 'node:events';
 import path from 'node:path';
 import { SealgateError } from '../src/errors.js';
 import { proxyFor, parseProxyUrl, connectViaProxy, startProxyForwarder } from '../src/proxy.js';
@@ -139,4 +141,66 @@ test('guarded tool proxy checks HTTP destinations and reconstructs conflicting H
   assert.deepEqual(received, []);
   assert.match(await send('http://127.0.0.1:4321/tool', 'api.anthropic.com'), /tool HTTP$/);
   assert.deepEqual(received, [{ url: 'http://127.0.0.1:4321/tool', host: '127.0.0.1:4321' }]);
+});
+
+test('cancellation after CONNECT closes a stalled TLS handshake and rejects promptly', { timeout: 5000 }, async t => {
+  let ready!: () => void;
+  const clientHello = new Promise<void>(resolve => { ready = resolve; });
+  const sockets = new Set<import('node:net').Socket>();
+  const proxy = createTcpServer(socket => {
+    sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', ready);
+    });
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => proxy.close(() => resolve())); });
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const pending = request(new URL('https://upstream.test/'), { method: 'POST', headers: {}, body: 'synthetic',
+    signal: controller.signal, env: { HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as { port: number }).port}` } });
+  await clientHello;
+  const rejected = assert.rejects(pending, /abort/i);
+  const closed = once([...sockets][0], 'close');
+  controller.abort();
+  await rejected; await closed;
+  assert.equal(sockets.size, 0);
+});
+
+test('malformed proxy credentials reject before opening a socket', async () => {
+  for (const credentials of ['user:%', '%:password', 'user:%80', 'user:%E0%A4']) {
+    const url = `http://${credentials}@127.0.0.1:1`;
+    assert.throws(() => parseProxyUrl(url), /invalid URL encoding/);
+    await assert.rejects(connectViaProxy(new URL(url), 'upstream.test', 443), /invalid URL encoding/);
+    await assert.rejects(startProxyForwarder(new URL(url), { loopback: true }), /invalid URL encoding/);
+  }
+});
+
+test('tool forwarding injects host proxy credentials for CONNECT and chunked HTTP', { timeout: 5000 }, async t => {
+  const expected = `Basic ${Buffer.from('synthetic:p:ass').toString('base64')}`;
+  const seen: Array<{ auth: string | undefined; body: string }> = [];
+  const proxy = createHttpServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    seen.push({ auth: req.headers['proxy-authorization'], body });
+    res.writeHead(req.headers['proxy-authorization'] === expected ? 200 : 407); res.end('http-ok');
+  });
+  proxy.on('connect', (req, socket) => {
+    seen.push({ auth: req.headers['proxy-authorization'], body: 'CONNECT' });
+    socket.end(req.headers['proxy-authorization'] === expected ? 'HTTP/1.1 200 OK\r\n\r\n' : 'HTTP/1.1 407 Authentication Required\r\n\r\n');
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => proxy.close(() => resolve())));
+  const forwarder = await startProxyForwarder(new URL(`http://synthetic:p%3Aass@127.0.0.1:${(proxy.address() as { port: number }).port}`), { loopback: true });
+  t.after(() => forwarder.close());
+  const socket = await connectViaProxy(new URL(`http://127.0.0.1:${forwarder.port}`), 'upstream.test', 443);
+  socket.destroy();
+  await new Promise<void>((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port: forwarder.port, method: 'POST', path: 'http://upstream.test/tool',
+      headers: { 'proxy-authorization': 'Basic client-supplied', 'transfer-encoding': 'chunked' } }, res => {
+      assert.equal(res.statusCode, 200); res.resume(); res.on('end', resolve);
+    });
+    req.on('error', reject); req.write('chunk-'); req.end('body');
+  });
+  assert.deepEqual(seen, [{ auth: expected, body: 'CONNECT' }, { auth: expected, body: 'chunk-body' }]);
 });

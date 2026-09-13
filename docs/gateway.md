@@ -204,8 +204,9 @@ every HTTP request and CONNECT destination, rejecting the original provider's
 hostname, known IP addresses, and DNS aliases that resolve to those IPs. Invalid
 or unresolved destinations are denied. The host proxy receives reconstructed
 authorities so a conflicting Host header cannot bypass the check. Allowed
-traffic is not inspected or encrypted by SEALGATE. macOS retains its byte-level
-forwarder. Proxy credentials stay in the host forwarder on Linux.
+traffic is not inspected or encrypted by SEALGATE. Both platforms forward HTTP
+and CONNECT requests with proxy credentials injected on the host; those credentials
+are not placed in the sandbox environment.
 On Linux, direct tool networking remains available with or without this flag.
 Docker's [bridge network](https://docs.docker.com/engine/network/drivers/bridge/) and
 [seccomp documentation](https://docs.docker.com/engine/security/seccomp/) describe
