@@ -54,3 +54,24 @@ and use it; if it disappears, the launcher refuses to run Claude unconfined.
 Nested profiles are refused, so Claude Code's built-in Bash sandbox does not
 work inside SEALGATE. The `/dev/ttys*` write allowance needed for child
 pseudo-terminals also covers your other terminals.
+
+## Session cleanup
+
+A Node supervisor runs inside the same Seatbelt instance as Claude. On normal
+client exit or cancellation, the host enumerates live user PIDs without reading
+arguments or environments and sends them over a private IPC channel. The
+supervisor stops and kills only processes the kernel permits it to signal via
+`(target same-sandbox)`. This catches detached, reparented and double-forked tools;
+it does not depend on process groups or inherited environment markers. The host
+repeats enumeration until a sweep finds no remaining session processes, then
+removes the temporary runtime. Other sandbox sessions and host processes are
+outside that signal permission. The helper refuses to start without host IPC or
+if it can signal its host parent.
+The kernel's signal path applies permission checks to each target; see Apple's
+[XNU signal implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c).
+
+Cancellation gives the client 1.5 seconds to exit before forced cleanup. A forced
+host/supervisor crash or SIGKILL can still prevent cleanup; an unexpected supervisor
+exit is reported as an error, never successful session completion. This is lifecycle
+supervision, not an additional security boundary against a hostile process that
+can signal another member of its own sandbox.

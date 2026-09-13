@@ -1,6 +1,6 @@
 {
   "name": "sealgate",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": { "name": "Max Lv" },
   "license": "MIT",
   "description": "Session reminder for protecting sensitive prompt spans with the local sealgate CLI"

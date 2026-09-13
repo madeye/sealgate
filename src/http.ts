@@ -35,13 +35,28 @@ export function request(url: URL, options: RequestOptions): Promise<HttpResponse
     const tunnel = proxy ? {
       agent: undefined,
       createConnection(_options: unknown, callback: (error: Error | null, socket: Duplex) => void): undefined {
-        const failed = (error: unknown): void => callback(error instanceof Error ? error : new Error('proxy failure'), undefined as never);
+        let completed = false;
+        const finish = (error: Error | null, socket?: Duplex): void => {
+          if (completed) return;
+          completed = true;
+          callback(error, socket as Duplex);
+        };
         connectViaProxy(proxy, url.hostname, port, options.signal).then(socket => {
-          if (!secure) { callback(null, socket); return; }
+          if (options.signal?.aborted) { socket.destroy(); finish(new Error('aborted')); return; }
+          if (!secure) { finish(null, socket); return; }
           const tls = tlsConnect({ socket, servername: url.hostname, host: url.hostname, port, ...(options.ca ? { ca: options.ca } : {}) });
-          tls.once('error', failed);
-          tls.once('secureConnect', () => { tls.off('error', failed); callback(null, tls); });
-        }, failed);
+          const cleanup = (): void => {
+            options.signal?.removeEventListener('abort', abort);
+            tls.off('error', failed); tls.off('close', closed); tls.off('secureConnect', connected);
+          };
+          const failed = (error: Error): void => { cleanup(); tls.destroy(); finish(error); };
+          const abort = (): void => failed(new Error('aborted'));
+          const closed = (): void => failed(new Error('TLS connection closed'));
+          const connected = (): void => { cleanup(); finish(null, tls); };
+          tls.once('error', failed); tls.once('close', closed); tls.once('secureConnect', connected);
+          options.signal?.addEventListener('abort', abort, { once: true });
+          if (options.signal?.aborted) abort();
+        }).catch(error => finish(error instanceof Error ? error : new Error('proxy failure')));
         return undefined;
       },
     } : {};

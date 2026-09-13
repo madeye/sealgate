@@ -36,6 +36,7 @@ jobs:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
 
   sandbox:

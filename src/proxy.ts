@@ -1,4 +1,4 @@
-import { BlockList, createConnection, createServer, isIP } from 'node:net';
+import { BlockList, createConnection, isIP } from 'node:net';
 import type { Socket } from 'node:net';
 import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { chmod } from 'node:fs/promises';
@@ -25,7 +25,17 @@ export function parseProxyUrl(value: string): URL {
       url.search || url.hash || isIP(bare(url.hostname)) === 0 && !/^[a-z0-9.-]+$/i.test(url.hostname)) {
     fail('Proxy environment variable must be an http://host:port URL.');
   }
+  proxyAuthorization(url);
   return url;
+}
+
+/** Decode before opening sockets, so malformed escapes use the normal error path. */
+function proxyAuthorization(proxy: URL): string | undefined {
+  try {
+    const username = decodeURIComponent(proxy.username);
+    const password = decodeURIComponent(proxy.password);
+    return username || password ? `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}` : undefined;
+  } catch { fail('Proxy credentials contain invalid URL encoding.'); }
 }
 
 export function proxyPort(proxy: URL): number {
@@ -86,6 +96,7 @@ function authority(host: string, port: number): string {
 export function connectViaProxy(proxy: URL, host: string, port: number, signal?: AbortSignal): Promise<Socket> {
   return new Promise((resolve, reject) => {
     if (/[\s:/]/.test(bare(host)) && isIP(bare(host)) !== 6) { reject(new Error('invalid host')); return; }
+    const authorization = proxyAuthorization(proxy);
     const socket = createConnection({ host: bare(proxy.hostname), port: proxyPort(proxy) });
     let head = '';
     let settled = false;
@@ -115,11 +126,7 @@ export function connectViaProxy(proxy: URL, host: string, port: number, signal?:
     socket.on('data', onData); socket.once('error', onError); socket.once('close', onClose);
     socket.once('connect', () => {
       const target = authority(host, port);
-      let credentials = '';
-      if (proxy.username) {
-        const pair = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-        credentials = `Proxy-Authorization: Basic ${Buffer.from(pair, 'utf8').toString('base64')}\r\n`;
-      }
+      const credentials = authorization ? `Proxy-Authorization: ${authorization}\r\n` : '';
       socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${credentials}Connection: keep-alive\r\n\r\n`);
     });
   });
@@ -131,43 +138,11 @@ export interface Forwarder {
   close(): Promise<void>;
 }
 
-/** Forward to the host proxy. With a destination policy, validate HTTP and
- * CONNECT requests; otherwise preserve the macOS byte-pipe behavior. */
+/** Forward HTTP and CONNECT requests, injecting host-only proxy credentials.
+ * Linux additionally supplies a destination policy; macOS allows all destinations. */
 export async function startProxyForwarder(proxy: URL, listen: { socketPath: string } | { loopback: true },
-  blocks?: (host: string) => Promise<boolean>): Promise<Forwarder> {
-  if (blocks) return startGuardedProxyForwarder(proxy, listen, blocks);
-  const active = new Set<Socket>();
-  const server = createServer(client => {
-    const upstream = createConnection({ host: bare(proxy.hostname), port: proxyPort(proxy) });
-    active.add(client); active.add(upstream);
-    const drop = (): void => { client.destroy(); upstream.destroy(); active.delete(client); active.delete(upstream); };
-    client.on('error', drop); upstream.on('error', drop);
-    client.on('close', drop); upstream.on('close', drop);
-    client.pipe(upstream).pipe(client);
-  });
-  server.maxConnections = 64;
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    const ready = (): void => { server.off('error', reject); resolve(); };
-    if ('socketPath' in listen) server.listen(listen.socketPath, ready);
-    else server.listen(0, '127.0.0.1', ready);
-  });
-  if ('socketPath' in listen) await chmod(listen.socketPath, 0o600);
-  const address = server.address();
-  return {
-    port: address && typeof address === 'object' ? address.port : undefined,
-    socketPath: 'socketPath' in listen ? listen.socketPath : undefined,
-    async close(): Promise<void> {
-      for (const socket of active) socket.destroy();
-      await new Promise<void>(resolve => server.close(() => resolve()));
-    },
-  };
-}
-
-/** Linux's tool proxy checks each destination before using the host proxy.
- * CONNECT payloads remain opaque; ordinary HTTP requests are checked individually. */
-async function startGuardedProxyForwarder(proxy: URL, listen: { socketPath: string } | { loopback: true },
-  blocks: (host: string) => Promise<boolean>): Promise<Forwarder> {
+  blocks: (host: string) => Promise<boolean> = async () => false): Promise<Forwarder> {
+  const authorization = proxyAuthorization(proxy);
   const active = new Set<Socket>();
   const controller = new AbortController();
   const server = createHttpServer({ maxHeaderSize: HEAD_LIMIT, headersTimeout: 10_000, requestTimeout: 300_000 }, (req, res) => {
@@ -185,7 +160,7 @@ async function startGuardedProxyForwarder(proxy: URL, listen: { socketPath: stri
           const key = name.trim().toLowerCase();
           if (key !== 'host' && key !== 'connection') delete headers[key];
         }
-        if (proxy.username) headers['proxy-authorization'] = `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`;
+        if (authorization) headers['proxy-authorization'] = authorization;
         const upstream = httpRequest({ host: bare(proxy.hostname), port: proxyPort(proxy), method: req.method,
           path: target.href, headers, signal: controller.signal, agent: false }, response => {
           res.writeHead(response.statusCode ?? 502, { ...response.headers, connection: 'close' });

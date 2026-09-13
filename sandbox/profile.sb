@@ -3,6 +3,7 @@
 ;;   WORKSPACE     project directory (read-write)
 ;;   RUNTIME       per-launch directory: temporary HOME, TMPDIR, this profile
 ;;   BIN           the native Claude binary
+;;   NODE          Node executable for the confined session supervisor
 ;;   KEYDIR        SEALGATE configuration and key directory (hidden)
 ;;   USER_FOLDERS  the per-user /private/var/folders tree (hidden except RUNTIME)
 ;;   TEMP          the per-user temporary directory
@@ -55,7 +56,7 @@
 (allow file-read-metadata (vnode-type DIRECTORY))
 (deny file-read* (subpath "/Users") (subpath "/Volumes") (subpath (param "USER_FOLDERS")))
 (allow file-read*
-  (subpath (param "WORKSPACE")) (subpath (param "RUNTIME")) (literal (param "BIN")) (subpath "/private/tmp"))
+  (subpath (param "WORKSPACE")) (subpath (param "RUNTIME")) (literal (param "BIN")) (literal (param "NODE")) (subpath "/private/tmp"))
 (allow file-write*
   (subpath (param "WORKSPACE")) (subpath (param "RUNTIME")) (subpath "/private/tmp")
   (literal "/dev/null") (literal "/dev/tty") (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$")
