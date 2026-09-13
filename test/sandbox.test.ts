@@ -11,7 +11,8 @@ import { RequestProtector } from '../src/request-protection.js';
 import { configDirectory, loadConfig } from '../src/config.js';
 import { providerSettings } from '../src/env.js';
 import { detectSensitive } from '../src/provider.js';
-import { temporary, provider } from './helpers.js';
+import { temporary, provider, mockProxy } from './helpers.js';
+import { startProxyForwarder } from '../src/proxy.js';
 
 test('subscription loading requires private, current OAuth credentials and preserves the credential', async t => {
   const dir = await temporary(t);
@@ -42,10 +43,15 @@ test('Docker end-to-end: encrypted egress, child TCP/DNS isolation, Unix socket 
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     captured.push(Buffer.concat(chunks).toString()); res.end('ok');
   })).replace(/\/v1$/, '');
+  const plainPort = Number(new URL(upstream).port);
+  const proxy = await mockProxy(t, (host, port) => host === 'upstream.test' ? { host: '127.0.0.1', port } : undefined);
+  const forwarder = await startProxyForwarder(new URL(proxy.url), { socketPath: path.join(runtime, 'sockets/proxy.sock') });
+  t.after(() => forwarder.close());
   const protector = new RequestProtector(randomBytes(32), async text => ({ sensitive_substrings: text.includes('synthetic-secret') ? ['synthetic-secret'] : [] }));
   const gateway = await startGateway({ protector, authorization: 'Bearer synthetic-subscription-token', upstream,
     socketPath: path.join(runtime, 'sockets/gateway.sock') });
   t.after(() => gateway.close());
+  const CRLF = '\\r\\n';
   const code = String.raw`
     const assert=require('node:assert/strict'),fs=require('node:fs'),net=require('node:net'),cp=require('node:child_process');
     (async()=>{
@@ -72,12 +78,15 @@ test('Docker end-to-end: encrypted egress, child TCP/DNS isolation, Unix socket 
       });
       assert.equal(response.status,200);assert.equal(await response.text(),'ok');
       assert.equal((await fetch(process.env.ANTHROPIC_BASE_URL+'/telemetry',{method:'POST',body:'synthetic-secret'})).status,403);
+      assert.equal(process.env.HTTPS_PROXY,'http://127.0.0.1:17841');assert.equal(process.env.NO_PROXY,'127.0.0.1,localhost');
+      const status=await new Promise((resolve,reject)=>{const s=net.connect(17841,'127.0.0.1');let head='';s.setTimeout(5000,()=>{s.destroy();reject(Error('tunnel timeout'))});s.on('connect',()=>s.write('CONNECT upstream.test:${plainPort} HTTP/1.1${CRLF}Host: upstream.test:${plainPort}${CRLF}${CRLF}'));s.on('data',d=>{head+=d;if(head.includes('${CRLF}${CRLF}')){s.destroy();resolve(head.split(' ')[1])}});s.on('error',reject)});
+      assert.equal(status,'200');
       fs.writeFileSync('/workspace/result.txt','sandbox checks passed');
     })().catch(()=>{process.stderr.write('Sandbox probe failed\n');process.exit(1)});
   `;
   const binary = await realpath(process.env.SEALGATE_TEST_CLAUDE ?? path.join(homedir(), '.local/bin/claude'));
-  const status = await runSandbox({ runtime, workspace, binary, print: true, command: ['node', '-e', code] });
-  assert.equal(status, 0); assert.equal(unixConnections, 0);
+  const status = await runSandbox({ runtime, workspace, binary, print: true, proxyEgress: true, command: ['node', '-e', code] });
+  assert.equal(status, 0); assert.equal(unixConnections, 0); assert.deepEqual(proxy.log, [`upstream.test:${plainPort}`]);
   assert.equal(captured.length, 1); assert.ok(!captured[0].includes('synthetic-secret')); assert.ok(captured[0].includes('[[SEALGATE:v1:'));
   assert.equal(await readFile(path.join(workspace, 'result.txt'), 'utf8'), 'sandbox checks passed');
   assert.equal(await readFile(path.join(workspace, '.env'), 'utf8'), 'SEALGATE_API_KEY=synthetic-detector-key');
