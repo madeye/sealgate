@@ -7,12 +7,14 @@ import { temporary } from './helpers.js';
 
 const options = { baseUrl: 'http://127.0.0.1:1234/v1', model: 'synthetic-detector' };
 
-test('URL validation allows HTTPS and only loopback HTTP; appends endpoint under base path', () => {
-  for (const url of ['https://trusted.example/api/v1', 'http://localhost:8000/v1/', 'http://127.0.0.2:8000', 'http://[::1]:8000/v1']) {
+test('URL validation allows HTTPS and only loopback or private-LAN HTTP; appends endpoint under base path', () => {
+  for (const url of ['https://trusted.example/api/v1', 'http://localhost:8000/v1/', 'http://127.0.0.2:8000', 'http://[::1]:8000/v1',
+    'http://192.168.0.4:8080/v1', 'http://10.9.0.2:8080/v1', 'http://172.16.0.1/v1', 'http://172.31.255.254/v1', 'http://[fd12:3456::1]:8000/v1']) {
     assert.ok(endpointFor(url).pathname.endsWith('/chat/completions'));
   }
   assert.equal(endpointFor('https://trusted.example/api/v1/').href, 'https://trusted.example/api/v1/chat/completions');
-  for (const url of ['http://trusted.example/v1', 'http://localhost.example/v1', 'http://192.168.1.2/v1',
+  for (const url of ['http://trusted.example/v1', 'http://localhost.example/v1', 'http://spark.local/v1', 'http://8.8.8.8/v1',
+    'http://172.32.0.1/v1', 'http://172.15.255.255/v1', 'http://169.254.1.1/v1', 'http://100.64.0.1/v1', 'http://[fe80::1]/v1', 'http://[2001:db8::1]/v1',
     'ftp://localhost/v1', 'https://user:secret@example.test/v1', 'https://example.test/?key=secret',
     'https://example.test/#secret', 'invalid']) assert.throws(() => endpointFor(url));
 });

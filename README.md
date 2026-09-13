@@ -87,7 +87,17 @@ To use another environment variable, pass `--api-key-env PRIVATE_LLM_API_KEY` to
 sealgate init --base-url http://127.0.0.1:8000/v1 --model local-detector --no-api-key
 ```
 
-HTTPS is required except for loopback HTTP (`localhost`, `127.0.0.0/8`, or `::1`).
+HTTPS is required except for plain HTTP to loopback (`localhost`, `127.0.0.0/8`, or
+`::1`) or to a literal private LAN address (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, or IPv6 `fc00::/7`), for example a vLLM host on your home network:
+
+```sh
+sealgate init --base-url http://192.168.0.4:8080/v1 --model qwen3.8-27b
+```
+
+Hostnames other than `localhost` always require HTTPS, since a name can resolve to
+any address. Plain HTTP on a LAN is readable by anyone on that network segment, so
+use it only on a network you control.
 URL credentials, query strings, fragments, and HTTP redirects are rejected.
 The base path is preserved and `/chat/completions` appended, so include `/v1` if
 your provider requires it. HTTP errors, refusals, truncated responses, unsupported
