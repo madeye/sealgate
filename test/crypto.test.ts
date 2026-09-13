@@ -10,7 +10,7 @@ test('repeated substrings are all replaced with independent ciphertext', () => {
   const key = randomBytes(32);
   const prompt = 'Email synthetic@example.test; repeat synthetic@example.test.\n';
   const protectedText = protectText(prompt, detection('synthetic@example.test', 'synthetic@example.test'), key);
-  const markers = protectedText.match(/\[\[HECC:v1:[\w-]+\]\]/g);
+  const markers = protectedText.match(/\[\[SEALGATE:v1:[\w-]+\]\]/g);
   assert.ok(markers);
   assert.equal(markers.length, 2);
   assert.notEqual(markers[0], markers[1]);
@@ -25,7 +25,7 @@ test('overlapping, nested, and self-overlapping matches merge', () => {
   assert.deepEqual(detectionRanges('aaa', detection('aa')), [{ start: 0, end: 3 }]);
   const key = randomBytes(32);
   const result = protectText('x ababa y', detection('aba', 'bab'), key);
-  assert.equal(result.match(/\[\[HECC:/g)?.length, 1);
+  assert.equal(result.match(/\[\[SEALGATE:/g)?.length, 1);
   assert.equal(decryptText(result, key), 'x ababa y');
 });
 
@@ -56,7 +56,7 @@ test('invalid detection data is rejected instead of silently ignoring entries', 
   }
   assert.throws(() => detectionRanges('aa', detection(...Array(10_001).fill('a'))));
   assert.throws(() => detectionRanges('a'.repeat(100_001), detection('a')));
-  assert.throws(() => protectText('[[HECC:v1:existing]]', detection(), randomBytes(32)));
+  assert.throws(() => protectText('[[SEALGATE:v1:existing]]', detection(), randomBytes(32)));
 });
 
 test('AES-GCM rejects a wrong key and changes to nonce, tag, or ciphertext', () => {
@@ -65,11 +65,11 @@ test('AES-GCM rejects a wrong key and changes to nonce, tag, or ciphertext', () 
   assert.equal(decryptText(marker, key), 'synthetic secret');
   assert.notEqual(encryptSpan('synthetic secret', key), marker);
   assert.throws(() => decryptText(marker, randomBytes(32)));
-  const payload = Buffer.from(marker.slice('[[HECC:v1:'.length, -2), 'base64url');
+  const payload = Buffer.from(marker.slice('[[SEALGATE:v1:'.length, -2), 'base64url');
   for (const index of [0, 12, 28]) {
     const changed = Buffer.from(payload);
     changed[index] ^= 1;
-    assert.throws(() => decryptText(`[[HECC:v1:${changed.toString('base64url')}]]`, key));
+    assert.throws(() => decryptText(`[[SEALGATE:v1:${changed.toString('base64url')}]]`, key));
   }
   assert.throws(() => encryptSpan('secret', Buffer.alloc(31)));
   assert.throws(() => protectText('public', detection(), Buffer.alloc(0)));
@@ -78,7 +78,7 @@ test('AES-GCM rejects a wrong key and changes to nonce, tag, or ciphertext', () 
 test('malformed, truncated, noncanonical, and unsupported markers fail', () => {
   const key = randomBytes(32);
   const valid = encryptSpan('secret', key);
-  for (const marker of ['[[HECC:', '[[HECC:v1:]]', '[[HECC:v1:abc]]', '[[HECC:v1:!]]',
+  for (const marker of ['[[SEALGATE:', '[[SEALGATE:v1:]]', '[[SEALGATE:v1:abc]]', '[[SEALGATE:v1:!]]',
     valid.replace('v1', 'v2'), valid.slice(0, -1), valid.replace(']]', '=]]')]) {
     assert.throws(() => decryptText(`surrounding ${valid} then ${marker}`, key));
   }

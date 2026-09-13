@@ -1,9 +1,9 @@
 // Only these locally authored messages may reach stderr. Never forward errors
 // from fetch, JSON parsing, crypto, the filesystem, or user-provided values.
-export class HeccError extends Error {}
+export class SealgateError extends Error {}
 
 export function fail(message: string): never {
-  throw new HeccError(message);
+  throw new SealgateError(message);
 }
 
 export function hasErrorCode(error: unknown, code: string): boolean {

@@ -2,7 +2,7 @@
 // socket mount and no external network. The host gateway validates all requests.
 import { createServer, createConnection } from 'node:net';
 const server = createServer(client => {
-  const host = createConnection('/run/hecc/gateway.sock');
+  const host = createConnection('/run/sealgate/gateway.sock');
   client.on('error', () => host.destroy());
   host.on('error', () => client.destroy());
   client.on('close', () => host.destroy());

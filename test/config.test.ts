@@ -18,9 +18,9 @@ test('URL validation allows HTTPS and only loopback HTTP; appends endpoint under
 });
 
 test('configuration rejects invalid fields and supports local config directory precedence', () => {
-  assert.equal(configDirectory({ HECC_CONFIG_DIR: '/private/hecc', XDG_CONFIG_HOME: '/xdg' }), '/private/hecc');
-  assert.equal(configDirectory({ XDG_CONFIG_HOME: '/xdg' }), '/xdg/hecc');
-  assert.throws(() => configDirectory({ HECC_CONFIG_DIR: 'relative' }));
+  assert.equal(configDirectory({ SEALGATE_CONFIG_DIR: '/private/sealgate', XDG_CONFIG_HOME: '/xdg' }), '/private/sealgate');
+  assert.equal(configDirectory({ XDG_CONFIG_HOME: '/xdg' }), '/xdg/sealgate');
+  assert.throws(() => configDirectory({ SEALGATE_CONFIG_DIR: 'relative' }));
   const config = makeConfig(options);
   for (const change of [{ version: 2 }, { model: '' }, { timeoutMs: 0 }, { timeoutMs: 300001 },
     { timeoutMs: 1.5 }, { apiKeyEnv: 'a-b' }, { apiKey: 'must-not-be-here' },
@@ -52,10 +52,10 @@ test('key storage inside repositories or reached through symlinked parents is re
   const repo = path.join(parent, 'repo');
   await mkdir(repo);
   await mkdir(path.join(repo, '.git'));
-  await assert.rejects(initialize(path.join(repo, 'nested', 'hecc'), options), /outside a Git repository/);
+  await assert.rejects(initialize(path.join(repo, 'nested', 'sealgate'), options), /outside a Git repository/);
   const alias = path.join(parent, 'alias');
   await symlink(repo, alias);
-  await assert.rejects(initialize(path.join(alias, 'hecc'), options), /outside a Git repository/);
+  await assert.rejects(initialize(path.join(alias, 'sealgate'), options), /outside a Git repository/);
 });
 
 test('unsafe modes, symlinks, bad key lengths and malformed config fail closed', async t => {

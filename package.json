@@ -1,10 +1,10 @@
 {
-  "name": "hecc",
-  "version": "0.3.0",
+  "name": "sealgate",
+  "version": "0.4.0",
   "description": "Inspect and encrypt sensitive text in Claude Code requests through an isolated local gateway",
   "type": "module",
   "bin": {
-    "hecc": "dist/bin/hecc.js"
+    "sealgate": "dist/bin/sealgate.js"
   },
   "engines": {
     "node": ">=22"
@@ -15,7 +15,7 @@
     "prepare": "npm run build",
     "prepack": "npm run build",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "test:sandbox": "npm run build && HECC_TEST_DOCKER=1 node --test dist/test/sandbox.test.js",
+    "test:sandbox": "npm run build && SEALGATE_TEST_DOCKER=1 node --test dist/test/sandbox.test.js",
     "validate:plugin": "npm run build && claude plugin validate . --strict"
   },
   "files": [
@@ -32,7 +32,7 @@
   "author": "Max Lv",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/madeye/hecc.git"
+    "url": "git+https://github.com/madeye/sealgate.git"
   },
   "private": true,
   "devDependencies": {

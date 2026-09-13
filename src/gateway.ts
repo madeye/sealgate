@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { chmod } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { timingSafeEqual } from 'node:crypto';
-import { HeccError, fail } from './errors.js';
+import { SealgateError, fail } from './errors.js';
 import { isRecord } from './types.js';
 import { RequestProtector } from './request-protection.js';
 
@@ -108,22 +108,22 @@ export async function startGateway(options: GatewayOptions) {
     // Never interpolate a request, header, provider body, or raw exception into errors.
     if (req.method === 'HEAD' && req.url === '/api/hello') { res.writeHead(204); res.end(); return; }
     if (req.method !== 'POST' || !/^\/v1\/messages(?:\/count_tokens)?(?:\?beta=true)?$/.test(req.url ?? '')) {
-      reject(res, 403, 'HECC blocks this endpoint.'); return;
+      reject(res, 403, 'SEALGATE blocks this endpoint.'); return;
     }
     if (!same(req.headers.authorization ?? '', options.authorization) || req.headers['x-api-key']) {
-      reject(res, 401, 'HECC requires the saved subscription login; sign in outside the sandbox and restart.'); return;
+      reject(res, 401, 'SEALGATE requires the saved subscription login; sign in outside the sandbox and restart.'); return;
     }
     if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json' ||
         (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity')) {
-      reject(res, 415, 'HECC accepts uncompressed JSON only.'); return;
+      reject(res, 415, 'SEALGATE accepts uncompressed JSON only.'); return;
     }
     const version = req.headers['anthropic-version']; const beta = req.headers['anthropic-beta'];
     if (typeof version !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(version) ||
         typeof beta !== 'string' || beta.length > 4096 || !/^[a-z0-9,._ -]+$/.test(beta) ||
         !beta.split(',').some(value => /^oauth-\d{4}-\d{2}-\d{2}$/.test(value.trim()))) {
-      reject(res, 400, 'HECC requires Anthropic version and OAuth beta headers.'); return;
+      reject(res, 400, 'SEALGATE requires Anthropic version and OAuth beta headers.'); return;
     }
-    if (active.size >= 2) { reject(res, 429, 'HECC gateway is busy; retry shortly.'); return; }
+    if (active.size >= 2) { reject(res, 429, 'SEALGATE gateway is busy; retry shortly.'); return; }
     const controller = new AbortController(); active.add(controller);
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 600_000);
     const abort = (): void => { if (!res.writableEnded) controller.abort(); };
@@ -138,7 +138,7 @@ export async function startGateway(options: GatewayOptions) {
         method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { authorization: req.headers.authorization!, 'anthropic-version': version,
           'anthropic-beta': beta, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
-          'x-app': 'cli', 'user-agent': 'hecc/0.3.0' },
+          'x-app': 'cli', 'user-agent': 'sealgate/0.4.0' },
         body: protectedRequest.body,
       });
       // Fetch decompresses the body. Do not forward stale length/encoding, hop-
@@ -161,8 +161,8 @@ export async function startGateway(options: GatewayOptions) {
       res.end();
     } catch (error) {
       options.onActivity?.('blocked');
-      reject(res, error instanceof HeccError ? 400 : 502,
-        error instanceof HeccError ? error.message : 'HECC gateway request failed or timed out. No unprotected fallback was sent.');
+      reject(res, error instanceof SealgateError ? 400 : 502,
+        error instanceof SealgateError ? error.message : 'SEALGATE gateway request failed or timed out. No unprotected fallback was sent.');
     } finally {
       clearTimeout(timer); active.delete(controller); res.off('close', abort);
     }

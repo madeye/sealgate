@@ -80,7 +80,7 @@ export class RequestProtector {
       // decrypt a marker into the detector, Claude, its history, or tool output.
       const pieces: Array<{ start: number; end: number; marker: string }> = [];
       let cursor = 0;
-      while ((cursor = text.indexOf('[[HECC:', cursor)) !== -1) {
+      while ((cursor = text.indexOf('[[SEALGATE:', cursor)) !== -1) {
         const end = text.indexOf(']]', cursor);
         const marker = text.slice(cursor, end + 2);
         if (end < 0 || !this.issuedMarkers.has(marker)) fail('Gateway rejected an unknown or modified ciphertext marker.');
@@ -149,7 +149,7 @@ export class RequestProtector {
     walk(tree, () => {}, 0);
     // Plain field text avoids JSON escape mismatches for Unicode/newlines. A
     // random delimiter keeps unrelated fields separate; cross-field matches fail.
-    const boundary = `\n[HECC field boundary ${randomUUID()}]\n`;
+    const boundary = `\n[SEALGATE field boundary ${randomUUID()}]\n`;
     let offset = 0;
     const positioned = fields.map(field => {
       const start = offset; offset += field.text.length + boundary.length;

@@ -5,13 +5,13 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { DEFAULT_INSTRUCTIONS } from './detection.js';
-import { fail, hasErrorCode, HeccError } from './errors.js';
+import { fail, hasErrorCode, SealgateError } from './errors.js';
 import { isRecord } from './types.js';
 import type { Config, Environment, InitOptions } from './types.js';
 
 export function configDirectory(env: Environment = process.env): string {
-  const dir = env.HECC_CONFIG_DIR || path.join(env.XDG_CONFIG_HOME || path.join(homedir(), '.config'), 'hecc');
-  if (!path.isAbsolute(dir)) fail('HECC_CONFIG_DIR and XDG_CONFIG_HOME must be absolute paths.');
+  const dir = env.SEALGATE_CONFIG_DIR || path.join(env.XDG_CONFIG_HOME || path.join(homedir(), '.config'), 'sealgate');
+  if (!path.isAbsolute(dir)) fail('SEALGATE_CONFIG_DIR and XDG_CONFIG_HOME must be absolute paths.');
   return dir;
 }
 
@@ -60,7 +60,7 @@ export function makeConfig(options: InitOptions): Config {
     version: 1,
     baseUrl: options.baseUrl,
     model: options.model,
-    apiKeyEnv: options.apiKeyEnv === undefined ? 'HECC_API_KEY' : options.apiKeyEnv,
+    apiKeyEnv: options.apiKeyEnv === undefined ? 'SEALGATE_API_KEY' : options.apiKeyEnv,
     timeoutMs: options.timeoutMs ?? 30_000,
     detectionInstructions: DEFAULT_INSTRUCTIONS,
     additionalCategories: [],
@@ -80,7 +80,7 @@ async function outsideRepository(dir: string): Promise<void> {
   while (!(await exists(ancestor))) ancestor = path.dirname(ancestor);
   ancestor = await realpath(ancestor);
   while (true) {
-    if (await exists(path.join(ancestor, '.git'))) fail('HECC configuration and key must be outside a Git repository.');
+    if (await exists(path.join(ancestor, '.git'))) fail('SEALGATE configuration and key must be outside a Git repository.');
     const parent = path.dirname(ancestor);
     if (parent === ancestor) return;
     ancestor = parent;
@@ -91,7 +91,7 @@ function checkPrivate(stat: Stats, directory = false): void {
   if (process.platform === 'win32') fail('Owner-only key storage requires Linux, macOS, or WSL in this version.');
   if ((directory ? !stat.isDirectory() : !stat.isFile()) ||
       stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0 || (!directory && stat.nlink !== 1)) {
-    fail('HECC storage must be owned by you, with directory mode 700 and file mode 600, without links.');
+    fail('SEALGATE storage must be owned by you, with directory mode 700 and file mode 600, without links.');
   }
 }
 
@@ -105,7 +105,7 @@ async function readPrivate(file: string, maxBytes: number): Promise<Buffer> {
   try {
     const stat = await handle.stat();
     checkPrivate(stat);
-    if (stat.size > maxBytes) fail('HECC configuration or key file is too large.');
+    if (stat.size > maxBytes) fail('SEALGATE configuration or key file is too large.');
     return await handle.readFile();
   } finally { await handle.close(); }
 }
@@ -130,7 +130,7 @@ export async function initialize(dir: string, options: InitOptions): Promise<voi
     else await writePrivate(keyPath, randomBytes(32));
     await writePrivate(configPath, JSON.stringify(config, null, 2) + '\n');
   } catch (error) {
-    if (error instanceof HeccError) throw error;
+    if (error instanceof SealgateError) throw error;
     fail('Initialization failed; check the private configuration directory. Existing files were not overwritten.');
   }
 }
@@ -141,8 +141,8 @@ export async function loadConfig(dir: string): Promise<Config> {
     const bytes = await readPrivate(path.join(dir, 'config.json'), 256 * 1024);
     return validateConfig(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
   } catch (error) {
-    if (error instanceof HeccError) throw error;
-    fail('Cannot read configuration; run hecc init or check config.json and its permissions.');
+    if (error instanceof SealgateError) throw error;
+    fail('Cannot read configuration; run sealgate init or check config.json and its permissions.');
   }
 }
 
@@ -153,7 +153,7 @@ export async function loadKey(dir: string): Promise<Buffer> {
     if (key.length !== 32) fail('Encryption key must contain exactly 32 bytes.');
     return key;
   } catch (error) {
-    if (error instanceof HeccError) throw error;
+    if (error instanceof SealgateError) throw error;
     fail('Cannot read encryption key; check initialization and owner-only permissions.');
   }
 }

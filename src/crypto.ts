@@ -2,8 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { fail } from './errors.js';
 import { detectionRanges } from './detection.js';
 
-const PREFIX = '[[HECC:';
-const AAD = Buffer.from('hecc:v1', 'ascii');
+const PREFIX = '[[SEALGATE:';
+const AAD = Buffer.from('sealgate:v1', 'ascii');
 
 function validateKey(key: Buffer): void {
   if (!Buffer.isBuffer(key) || key.length !== 32) fail('Encryption key must contain exactly 32 bytes.');
@@ -17,7 +17,7 @@ export function encryptSpan(plaintext: string, key: Buffer): string {
     cipher.setAAD(AAD);
     const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const payload = Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64url');
-    return `[[HECC:v1:${payload}]]`;
+    return `[[SEALGATE:v1:${payload}]]`;
   } catch {
     fail('Encryption failed; no protected prompt was produced.');
   }
@@ -25,7 +25,7 @@ export function encryptSpan(plaintext: string, key: Buffer): string {
 
 export function validatePrompt(prompt: string): void {
   if (!prompt.isWellFormed()) fail('Input must be valid UTF-8 text.');
-  if (prompt.includes(PREFIX)) fail('Input contains a reserved HECC marker; protect original plaintext only.');
+  if (prompt.includes(PREFIX)) fail('Input contains a reserved SEALGATE marker; protect original plaintext only.');
 }
 
 export function protectText(prompt: string, result: unknown, key: Buffer): string {
@@ -50,8 +50,8 @@ export function decryptText(text: string, key: Buffer): string {
   while ((start = text.indexOf(PREFIX, cursor)) !== -1) {
     const end = text.indexOf(']]', start);
     const marker = end < 0 ? '' : text.slice(start, end + 2);
-    const match = /^\[\[HECC:v1:([A-Za-z0-9_-]+)\]\]$/.exec(marker);
-    if (!match) fail('Malformed or unsupported HECC marker; no plaintext was produced.');
+    const match = /^\[\[SEALGATE:v1:([A-Za-z0-9_-]+)\]\]$/.exec(marker);
+    if (!match) fail('Malformed or unsupported SEALGATE marker; no plaintext was produced.');
     try {
       const payload = Buffer.from(match[1], 'base64url');
       if (payload.length < 29 || payload.toString('base64url') !== match[1]) throw new Error();

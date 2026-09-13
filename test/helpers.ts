@@ -26,7 +26,7 @@ interface ChatRequest {
 }
 
 export async function temporary(t: TestContext): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'hecc-test-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'sealgate-test-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -58,10 +58,10 @@ export async function requestBody(req: IncomingMessage): Promise<ChatRequest> {
 
 export function cli(args: string[], input: string | Buffer, dir: string, extraEnv: Environment = {}): Promise<CliResult> {
   return new Promise((resolve, reject) => {
-    const inheritedEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HECC_')));
-    const child = spawn(process.execPath, [path.join(compiledRoot, 'bin/hecc.js'), ...args], {
+    const inheritedEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('SEALGATE_')));
+    const child = spawn(process.execPath, [path.join(compiledRoot, 'bin/sealgate.js'), ...args], {
       cwd: dir,
-      env: { ...inheritedEnv, HECC_CONFIG_DIR: dir, HECC_TEST_API_KEY: 'synthetic-provider-key', ...extraEnv },
+      env: { ...inheritedEnv, SEALGATE_CONFIG_DIR: dir, SEALGATE_TEST_API_KEY: 'synthetic-provider-key', ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];

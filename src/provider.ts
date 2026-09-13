@@ -1,5 +1,5 @@
 import { endpointFor, validateConfig } from './config.js';
-import { fail, HeccError } from './errors.js';
+import { fail, SealgateError } from './errors.js';
 import { isRecord } from './types.js';
 import type { Config, Environment } from './types.js';
 
@@ -56,7 +56,7 @@ export async function detectSensitive(prompt: string, config: Config, env: Envir
     return JSON.parse(message.content) as unknown;
   } catch (error) {
     if (signal?.aborted) fail('Protection canceled; no prompt was sent to Claude.');
-    if (error instanceof HeccError) throw error;
+    if (error instanceof SealgateError) throw error;
     if (controller.signal.aborted) fail('Trusted provider timed out; no protected prompt was produced.');
     fail('Trusted provider request or response failed; no protected prompt was produced.');
   } finally {

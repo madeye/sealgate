@@ -13,7 +13,7 @@ export interface ChatCallbacks {
 }
 
 export function claudeEnvironment(env: Environment, credentialName: string | null): Environment {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('HECC_') && name !== credentialName));
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('SEALGATE_') && name !== credentialName));
 }
 
 export class ProtectedChat {

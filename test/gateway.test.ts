@@ -71,7 +71,7 @@ test('complete request encryption: system, history, Unicode, tools, schema, meta
   assert.equal(sent.url, '/v1/messages?beta=true');
   assert.ok(h.detectorInputs[0].includes(confidential));
   assert.ok(!h.detectorInputs[0].includes(AUTH));
-  const markers = sent.body.match(/\[\[HECC:v1:[A-Za-z0-9_-]+\]\]/g)!;
+  const markers = sent.body.match(/\[\[SEALGATE:v1:[A-Za-z0-9_-]+\]\]/g)!;
   assert.equal(new Set(markers).size, 2, 'same spans use stable session ciphertext');
 });
 
@@ -81,11 +81,11 @@ test('no matches preserve data; overlapping matches merge; repeated history and 
   const body = request('Keep ababa here.');
   const first = await protector.protect(body);
   assert.deepEqual(restore(JSON.parse(first.body), key), body);
-  assert.equal((first.body.match(/\[\[HECC:/g) ?? []).length, 1);
+  assert.equal((first.body.match(/\[\[SEALGATE:/g) ?? []).length, 1);
   assert.equal((await protector.protect(body)).body, first.body);
   assert.equal((await protector.protect(JSON.parse(first.body))).body, first.body);
   assert.deepEqual(JSON.parse((await protector.protect(request())).body), request());
-  await assert.rejects(protector.protect(request('Unknown [[HECC:v1:fake]]')), /unknown or modified/);
+  await assert.rejects(protector.protect(request('Unknown [[SEALGATE:v1:fake]]')), /unknown or modified/);
 });
 
 test('secrets in JSON keys, numeric values, protocol fields and headers block the whole request', async t => {
@@ -120,7 +120,7 @@ test('token counting is protected and unneeded client headers are consumed local
   } as typeof HEADERS)).status, 200);
   assert.ok(!h.captured[0].body.includes('token-count-secret'));
   assert.equal(h.captured[0].headers['x-custom-secret'], undefined);
-  assert.equal(h.captured[0].headers['user-agent'], 'hecc/0.3.0');
+  assert.equal(h.captured[0].headers['user-agent'], 'sealgate/0.4.0');
 });
 
 test('malformed detector results, cross-field matches, encryption errors and cancellation fail closed', async t => {
