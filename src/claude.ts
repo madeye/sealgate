@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { fail, HeccError } from './errors.js';
+import { fail, SealgateError } from './errors.js';
 import { isRecord } from './types.js';
 import type { Environment } from './types.js';
 
-const CONTEXT = 'The user is communicating through hecc. Treat [[HECC:v1:...]] markers as opaque encrypted text. Use the surrounding text and explain when hidden values prevent an answer. Do not read HECC keys or credentials, run hecc decrypt, or restore plaintext into this conversation.';
+const CONTEXT = 'The user is communicating through sealgate. Treat [[SEALGATE:v1:...]] markers as opaque encrypted text. Use the surrounding text and explain when hidden values prevent an answer. Do not read SEALGATE keys or credentials, run sealgate decrypt, or restore plaintext into this conversation.';
 const OUTPUT_LIMIT = 16 * 1024 * 1024;
 
 export interface ClaudeOptions {
@@ -45,7 +45,7 @@ export async function runClaude(prompt: string, turn: ClaudeTurn, options: Claud
       cwd: options.cwd, env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
     });
-    let error: HeccError | undefined;
+    let error: SealgateError | undefined;
     let forceKill: ReturnType<typeof setTimeout> | undefined;
     let result: ClaudeResult | undefined;
     let streamed = false;
@@ -62,7 +62,7 @@ export async function runClaude(prompt: string, turn: ClaudeTurn, options: Claud
     };
     const stop = (message: string): void => {
       if (error) return;
-      error = new HeccError(message);
+      error = new SealgateError(message);
       kill('SIGTERM');
       forceKill = setTimeout(() => kill('SIGKILL'), 2000);
     };
@@ -119,7 +119,7 @@ export async function runClaude(prompt: string, turn: ClaudeTurn, options: Claud
       if (bytes > OUTPUT_LIMIT) stop('Claude output exceeded the size limit.');
     });
     child.stdin.on('error', () => stop('Could not send the protected prompt to Claude.'));
-    child.on('error', () => stop('Could not start Claude Code. Install claude and sign in before using hecc chat.'));
+    child.on('error', () => stop('Could not start Claude Code. Install claude and sign in before using sealgate chat.'));
     child.on('close', code => {
       clearTimeout(timer);
       clearTimeout(forceKill);
@@ -128,7 +128,7 @@ export async function runClaude(prompt: string, turn: ClaudeTurn, options: Claud
       if (pending) consume(pending);
       clearTimeout(forceKill);
       if (error) reject(error);
-      else if (code !== 0 || !result) reject(new HeccError('Claude did not complete the turn. Check claude auth status and try again.'));
+      else if (code !== 0 || !result) reject(new SealgateError('Claude did not complete the turn. Check claude auth status and try again.'));
       else {
         if (!streamed) turn.onText?.(result.text);
         resolve(result);

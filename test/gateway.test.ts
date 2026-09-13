@@ -4,7 +4,10 @@ import { randomBytes } from 'node:crypto';
 import { RequestProtector } from '../src/request-protection.js';
 import { startGateway } from '../src/gateway.js';
 import { decryptText } from '../src/crypto.js';
-import { provider, answer } from './helpers.js';
+import { readFile } from 'node:fs/promises';
+import { createServer as createHttpsServer } from 'node:https';
+import path from 'node:path';
+import { provider, answer, mockProxy, fixtures } from './helpers.js';
 import { makeConfig } from '../src/config.js';
 import { detectSensitive } from '../src/provider.js';
 import type { TestContext } from 'node:test';
@@ -71,7 +74,7 @@ test('complete request encryption: system, history, Unicode, tools, schema, meta
   assert.equal(sent.url, '/v1/messages?beta=true');
   assert.ok(h.detectorInputs[0].includes(confidential));
   assert.ok(!h.detectorInputs[0].includes(AUTH));
-  const markers = sent.body.match(/\[\[HECC:v1:[A-Za-z0-9_-]+\]\]/g)!;
+  const markers = sent.body.match(/\[\[SEALGATE:v1:[A-Za-z0-9_-]+\]\]/g)!;
   assert.equal(new Set(markers).size, 2, 'same spans use stable session ciphertext');
 });
 
@@ -81,11 +84,11 @@ test('no matches preserve data; overlapping matches merge; repeated history and 
   const body = request('Keep ababa here.');
   const first = await protector.protect(body);
   assert.deepEqual(restore(JSON.parse(first.body), key), body);
-  assert.equal((first.body.match(/\[\[HECC:/g) ?? []).length, 1);
+  assert.equal((first.body.match(/\[\[SEALGATE:/g) ?? []).length, 1);
   assert.equal((await protector.protect(body)).body, first.body);
   assert.equal((await protector.protect(JSON.parse(first.body))).body, first.body);
   assert.deepEqual(JSON.parse((await protector.protect(request())).body), request());
-  await assert.rejects(protector.protect(request('Unknown [[HECC:v1:fake]]')), /unknown or modified/);
+  await assert.rejects(protector.protect(request('Unknown [[SEALGATE:v1:fake]]')), /unknown or modified/);
 });
 
 test('secrets in JSON keys, numeric values, protocol fields and headers block the whole request', async t => {
@@ -120,7 +123,7 @@ test('token counting is protected and unneeded client headers are consumed local
   } as typeof HEADERS)).status, 200);
   assert.ok(!h.captured[0].body.includes('token-count-secret'));
   assert.equal(h.captured[0].headers['x-custom-secret'], undefined);
-  assert.equal(h.captured[0].headers['user-agent'], 'hecc/0.3.0');
+  assert.equal(h.captured[0].headers['user-agent'], 'sealgate/0.4.0');
 });
 
 test('malformed detector results, cross-field matches, encryption errors and cancellation fail closed', async t => {
@@ -199,4 +202,37 @@ test('upstream redirects are blocked and timeout cancels detection without a rem
   t.after(() => timeoutGateway.close()); assert.ok(timeoutGateway.address && typeof timeoutGateway.address !== 'string');
   assert.equal((await fetch(`http://127.0.0.1:${timeoutGateway.address.port}/v1/messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify(request()) })).status, 502);
   assert.ok(aborted); assert.equal(h.captured.length, 0);
+});
+
+test('gateway reaches a remote upstream through the configured proxy and bypasses it for loopback', async t => {
+  const [key, cert] = await Promise.all([readFile(path.join(fixtures, 'tls/key.pem')), readFile(path.join(fixtures, 'tls/cert.pem'))]);
+  const bodies: string[] = [];
+  const server = createHttpsServer({ key, cert }, async (req, res) => {
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+    bodies.push(Buffer.concat(chunks).toString());
+    assert.equal(req.headers['accept-encoding'], 'identity');
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ content: [{ type: 'text', text: 'via proxy' }] }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const proxy = await mockProxy(t, (host, port) => host === 'upstream.test' ? { host: '127.0.0.1', port } : undefined);
+  const protector = new RequestProtector(randomBytes(32), async text => ({ sensitive_substrings: text.includes('proxy-secret') ? ['proxy-secret'] : [] }));
+  const gateway = await startGateway({ protector, authorization: AUTH, upstream: `https://upstream.test:${address.port}`,
+    ca: cert.toString(), env: { HTTPS_PROXY: proxy.url, NO_PROXY: 'localhost,127.0.0.1' } });
+  t.after(() => gateway.close());
+  assert.ok(gateway.address && typeof gateway.address !== 'string');
+  const response = await fetch(`http://127.0.0.1:${gateway.address.port}/v1/messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify(request('Contact proxy-secret')) });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { content: [{ type: 'text', text: 'via proxy' }] });
+  assert.deepEqual(proxy.log, [`upstream.test:${address.port}`]);
+  assert.equal(bodies.length, 1); assert.ok(!bodies[0].includes('proxy-secret')); assert.ok(bodies[0].includes('[[SEALGATE:v1:'));
+  // A loopback upstream never goes through the proxy even when one is configured.
+  const loopback = (await provider(t, (_req, res) => { res.setHeader('content-type', 'application/json'); res.end('{"content":[]}'); })).replace(/\/v1$/, '');
+  const direct = await startGateway({ protector, authorization: AUTH, upstream: loopback, env: { HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1' } });
+  t.after(() => direct.close());
+  assert.ok(direct.address && typeof direct.address !== 'string');
+  const bypass = await fetch(`http://127.0.0.1:${direct.address.port}/v1/messages`, { method: 'POST', headers: HEADERS, body: JSON.stringify(request()) });
+  assert.equal(bypass.status, 200);
+  assert.equal(proxy.log.length, 1);
 });

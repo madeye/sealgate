@@ -1,7 +1,7 @@
 # Security model
 
-`hecc claude` protects detected spans in complete outbound model requests and
-blocks other network traffic. The older `hecc protect` and `hecc chat` commands
+`sealgate claude` protects detected spans in complete outbound model requests and
+blocks other network traffic. The older `sealgate protect` and `sealgate chat` commands
 cover submitted prompts only. Its encryption
 and detection steps have different guarantees. This page describes what each
 participant receives and the limits to consider when using the output.
@@ -11,19 +11,19 @@ participant receives and the limits to consider when using the output.
 | Participant | Original prompt | Provider API credential | Local encryption key | Protected output |
 | --- | --- | --- | --- | --- |
 | Your local CLI | Yes | During protection | Yes | Yes |
-| Trusted detection endpoint | Yes | When authentication is enabled | No | Not sent by hecc |
-| Claude Code | Only if you send it separately | Not sent by hecc | Not sent by hecc | Sent by hecc chat, or pasted by you |
+| Trusted detection endpoint | Yes | When authentication is enabled | No | Not sent by sealgate |
+| Claude Code | Only if you send it separately | Not sent by sealgate | Not sent by sealgate | Sent by sealgate chat, or pasted by you |
 
-The table describes the prompt-only workflows. In `hecc claude`, **local Claude
+The table describes the prompt-only workflows. In `sealgate claude`, **local Claude
 sees original text**; the gateway protects it before it reaches remote Anthropic.
-The Docker launcher hides the host key directory, provider environment and root
+The sandbox launcher hides the host key directory, provider environment and root
 `.env`, and permits network access only through the inspecting gateway. Anthropic
 receives its own subscription OAuth credential as required for authentication;
 that credential is not sent to the detector. See [gateway boundaries](gateway.md).
 
 Choose a detection provider that you trust with the entire original prompt. A
 local vLLM service can keep detection on your machine, but its own logs and access
-controls still matter. `hecc` does not change the provider's retention policy or
+controls still matter. `sealgate` does not change the provider's retention policy or
 logging configuration.
 
 ## Detection is not a guarantee
@@ -62,12 +62,12 @@ user with mode `700`, in a file with mode `600`. Provider credentials can reside
 in a private `.env`, which this project ignores in Git and excludes from packages.
 These permissions do not isolate processes running under the same OS account.
 
-Outside the enforced `hecc claude` launcher, the Claude plugin's instruction to avoid reading keys or running decryption is
+Outside the enforced `sealgate claude` launcher, the Claude plugin's instruction to avoid reading keys or running decryption is
 guidance, not an access-control boundary. A tool running as your user may still
 read your files. Run decryption yourself in a separate terminal, and use OS-level
 isolation if local agent access is a threat you need to prevent.
 
-`hecc chat` passes only protected prompts to the Claude child through stdin and
+`sealgate chat` passes only protected prompts to the Claude child through stdin and
 removes detector credentials from its inherited environment. It does not sanitize
 Claude's workspace files, hooks, MCP servers, or other context. Print mode uses
 your normal Claude configuration, with new tool approvals denied by `dontAsk`.
@@ -95,18 +95,23 @@ the exit code when scripting, and copy only a successful protected result.
 
 ## Scope
 
-In `hecc protect` and `hecc chat`, direct Claude input, source files, tool results,
-and other context remain outside protection. The `hecc claude` gateway instead
+In `sealgate protect` and `sealgate chat`, direct Claude input, source files, tool results,
+and other context remain outside protection. The `sealgate claude` gateway instead
 inspects all supported outgoing model-request text, including file/tool context
 and history. Opaque uploads and unknown protocols are blocked. Other network
 traffic cannot bypass the gateway because the native CLI and its descendants run
-in a networkless Docker namespace with host Unix sockets denied by seccomp.
+in a networkless Docker namespace with host Unix sockets denied by seccomp
+(Linux), or under a deny-by-default Seatbelt profile whose only network route is
+the gateway port (macOS). The optional `--proxy-egress` tunnel is the one
+deliberate, uninspected exception and is off by default.
 
 This protects remote egress, not local plaintext at rest. Native Claude can keep
 original content in the temporary home until it is removed on exit. The project
 is writable, so tool changes to files persist. Host programs that later execute
-those files are outside confinement. The host kernel, Docker daemon, HECC process,
-terminal and trusted detector remain trusted. Encoded secrets and adversarial
+those files are outside confinement. The host kernel, Docker daemon or macOS
+sandbox, SEALGATE process, terminal and trusted detector remain trusted. The
+macOS sandbox shares the host kernel and IPC namespace and is the weaker of the
+two boundaries. Encoded secrets and adversarial
 inputs can evade model detection; interception is not a guarantee of detection.
 Read [the full gateway guide](gateway.md) for supported features and limits.
 

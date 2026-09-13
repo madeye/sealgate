@@ -1,14 +1,14 @@
 import { emitKeypressEvents } from 'node:readline';
 import type { Key } from 'node:readline';
 import { ProtectedChat } from './chat.js';
-import { fail, HeccError } from './errors.js';
+import { fail, SealgateError } from './errors.js';
 
 interface Message { role: string; text: string }
 
 // Remote text must never be interpreted as terminal escape commands. Replace
 // ciphertext only for display; the original markers still go to Claude intact.
 export function displayText(text: string): string {
-  return text.replace(/\[\[HECC:v1:[A-Za-z0-9_-]+\]\]/g, '[encrypted]')
+  return text.replace(/\[\[SEALGATE:v1:[A-Za-z0-9_-]+\]\]/g, '[encrypted]')
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '')
     .replace(/\t/g, '  ');
 }
@@ -38,8 +38,8 @@ export function wrapText(text: string, columns: number): string[] {
 export async function runTui(chat: ProtectedChat): Promise<void> {
   const input = process.stdin;
   const output = process.stdout;
-  if (!input.isTTY || !output.isTTY) fail('hecc chat requires an interactive terminal. Use hecc protect for piped input.');
-  const messages: Message[] = [{ role: 'hecc', text: 'Write a prompt below. Ctrl-S protects it and sends it to Claude. Enter adds a line.\n/new starts a fresh conversation; /quit exits. Submit commands with Ctrl-S.\nThe trusted detector sees your input and can miss secrets. Tool approvals are not interactive.' }];
+  if (!input.isTTY || !output.isTTY) fail('sealgate chat requires an interactive terminal. Use sealgate protect for piped input.');
+  const messages: Message[] = [{ role: 'sealgate', text: 'Write a prompt below. Ctrl-S protects it and sends it to Claude. Enter adds a line.\n/new starts a fresh conversation; /quit exits. Submit commands with Ctrl-S.\nThe trusted detector sees your input and can miss secrets. Tool approvals are not interactive.' }];
   let draft = '';
   let cursor = 0;
   let status = 'Ready';
@@ -70,7 +70,7 @@ export async function runTui(chat: ProtectedChat): Promise<void> {
       while (visible.length < historyHeight) visible.unshift('');
       const elapsed = busy ? ` (${Math.floor((Date.now() - started) / 1000)}s)` : '';
       const screen = [
-        wrapText('HECC · protected chat with Claude Code', columns)[0],
+        wrapText('SEALGATE · protected chat with Claude Code', columns)[0],
         ...visible,
         wrapText(`${status}${elapsed}${scroll ? ' · scrolled' : ''}`, columns)[0],
         '─'.repeat(columns),
@@ -139,8 +139,8 @@ export async function runTui(chat: ProtectedChat): Promise<void> {
         if (assistant) assistant.text = result.text;
         status = result.permissionDenials ? 'Done · a tool needed approval and was denied' : 'Ready';
       } catch (error) {
-        const message = error instanceof HeccError ? error.message : 'Chat request failed.';
-        messages.push({ role: 'hecc', text: message + (assistant ? '\nConversation reset after the incomplete Claude turn.' : '') });
+        const message = error instanceof SealgateError ? error.message : 'Chat request failed.';
+        messages.push({ role: 'sealgate', text: message + (assistant ? '\nConversation reset after the incomplete Claude turn.' : '') });
         status = 'Nothing further sent · edit or retry';
       } finally {
         busy = false;

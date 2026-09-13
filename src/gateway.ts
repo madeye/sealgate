@@ -4,9 +4,13 @@ import { once } from 'node:events';
 import { chmod } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { timingSafeEqual } from 'node:crypto';
-import { HeccError, fail } from './errors.js';
+import { SealgateError, fail } from './errors.js';
 import { isRecord } from './types.js';
+import type { Environment } from './types.js';
 import { RequestProtector } from './request-protection.js';
+import { request } from './http.js';
+
+const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
 export interface GatewayOptions {
   protector: RequestProtector;
@@ -14,6 +18,10 @@ export interface GatewayOptions {
   socketPath?: string;
   /** Library/test injection only. CLI always uses api.anthropic.com. */
   upstream?: string;
+  /** Library/test injection only: extra trust anchor for the upstream TLS session. */
+  ca?: string;
+  /** Environment consulted for HTTP(S)_PROXY and NO_PROXY when reaching upstream. */
+  env?: Environment;
   timeoutMs?: number;
   onActivity?: (event: 'inspecting' | 'forwarding' | 'blocked') => void;
 }
@@ -106,24 +114,26 @@ export async function startGateway(options: GatewayOptions) {
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Never interpolate a request, header, provider body, or raw exception into errors.
+    // A TCP listener is reachable by every local process; a Unix socket has no remote address.
+    if (req.socket.remoteAddress && !LOOPBACK.includes(req.socket.remoteAddress)) { reject(res, 403, 'SEALGATE accepts loopback clients only.'); return; }
     if (req.method === 'HEAD' && req.url === '/api/hello') { res.writeHead(204); res.end(); return; }
     if (req.method !== 'POST' || !/^\/v1\/messages(?:\/count_tokens)?(?:\?beta=true)?$/.test(req.url ?? '')) {
-      reject(res, 403, 'HECC blocks this endpoint.'); return;
+      reject(res, 403, 'SEALGATE blocks this endpoint.'); return;
     }
     if (!same(req.headers.authorization ?? '', options.authorization) || req.headers['x-api-key']) {
-      reject(res, 401, 'HECC requires the saved subscription login; sign in outside the sandbox and restart.'); return;
+      reject(res, 401, 'SEALGATE requires the saved subscription login; sign in outside the sandbox and restart.'); return;
     }
     if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json' ||
         (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity')) {
-      reject(res, 415, 'HECC accepts uncompressed JSON only.'); return;
+      reject(res, 415, 'SEALGATE accepts uncompressed JSON only.'); return;
     }
     const version = req.headers['anthropic-version']; const beta = req.headers['anthropic-beta'];
     if (typeof version !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(version) ||
         typeof beta !== 'string' || beta.length > 4096 || !/^[a-z0-9,._ -]+$/.test(beta) ||
         !beta.split(',').some(value => /^oauth-\d{4}-\d{2}-\d{2}$/.test(value.trim()))) {
-      reject(res, 400, 'HECC requires Anthropic version and OAuth beta headers.'); return;
+      reject(res, 400, 'SEALGATE requires Anthropic version and OAuth beta headers.'); return;
     }
-    if (active.size >= 2) { reject(res, 429, 'HECC gateway is busy; retry shortly.'); return; }
+    if (active.size >= 2) { reject(res, 429, 'SEALGATE gateway is busy; retry shortly.'); return; }
     const controller = new AbortController(); active.add(controller);
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 600_000);
     const abort = (): void => { if (!res.writableEnded) controller.abort(); };
@@ -134,35 +144,38 @@ export async function startGateway(options: GatewayOptions) {
       const protectedRequest = await options.protector.protect(input, [version, beta], controller.signal);
       controller.signal.throwIfAborted();
       options.onActivity?.('forwarding');
-      const response = await fetch(new URL(req.url!, upstream), {
-        method: 'POST', redirect: 'error', signal: controller.signal,
+      const response = await request(new URL(req.url!, upstream), {
+        method: 'POST', signal: controller.signal, env: options.env, ca: options.ca,
         headers: { authorization: req.headers.authorization!, 'anthropic-version': version,
           'anthropic-beta': beta, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
-          'x-app': 'cli', 'user-agent': 'hecc/0.3.0' },
+          'x-app': 'cli', 'user-agent': 'sealgate/0.4.0' },
         body: protectedRequest.body,
       });
-      // Fetch decompresses the body. Do not forward stale length/encoding, hop-
-      // by-hop headers, cookies, redirects, or a server-provided alternate route.
+      // Redirects are never followed: a server-provided alternate route gets no request.
+      if (response.status >= 300 && response.status < 400) { response.body.destroy(); throw new Error('redirect'); }
+      // Upstream is asked for identity encoding. Do not forward stale length/encoding,
+      // hop-by-hop headers, or cookies.
       const headers: Record<string, string> = { 'cache-control': 'no-store' };
       for (const name of ['content-type', 'request-id', 'retry-after', 'anthropic-ratelimit-requests-remaining',
         'anthropic-ratelimit-tokens-remaining', 'anthropic-ratelimit-requests-reset', 'anthropic-ratelimit-tokens-reset']) {
-        const value = response.headers.get(name); if (value) headers[name] = value;
+        const value = response.headers[name]; if (typeof value === 'string' && value) headers[name] = value;
       }
+      const ok = response.status >= 200 && response.status < 300;
       res.writeHead(response.status, headers);
       const observer = new RemoteObserver(options.protector, headers['content-type']?.includes('text/event-stream') ?? false);
       let bytes = 0;
-      if (response.body) for await (const chunk of response.body) {
+      for await (const chunk of response.body as AsyncIterable<Buffer>) {
         bytes += chunk.length;
         if (bytes > 32 * 1024 * 1024) fail('Gateway response exceeds the limit.');
-        if (response.ok) observer.write(chunk);
+        if (ok) observer.write(chunk);
         if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
       }
-      if (response.ok) observer.end();
+      if (ok) observer.end();
       res.end();
     } catch (error) {
       options.onActivity?.('blocked');
-      reject(res, error instanceof HeccError ? 400 : 502,
-        error instanceof HeccError ? error.message : 'HECC gateway request failed or timed out. No unprotected fallback was sent.');
+      reject(res, error instanceof SealgateError ? 400 : 502,
+        error instanceof SealgateError ? error.message : 'SEALGATE gateway request failed or timed out. No unprotected fallback was sent.');
     } finally {
       clearTimeout(timer); active.delete(controller); res.off('close', abort);
     }

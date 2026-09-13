@@ -1,10 +1,10 @@
-# How hecc works
+# How sealgate works
 
-`hecc` separates sensitive-text detection from cryptography. A trusted model
+`sealgate` separates sensitive-text detection from cryptography. A trusted model
 identifies which parts of a prompt should be hidden. The CLI encrypts those parts
-with a key stored on your machine. In `hecc claude`, the local Claude process sees
-original text and the gateway protects the outgoing request. The older `hecc
-chat` and `hecc protect` workflows protect prompts before Claude receives them.
+with a key stored on your machine. In `sealgate claude`, the local Claude process sees
+original text and the gateway protects the outgoing request. The older `sealgate
+chat` and `sealgate protect` workflows protect prompts before Claude receives them.
 See [the gateway guide](gateway.md) for complete request and network handling.
 
 The project is written in TypeScript, compiled into Node.js ES modules, and uses
@@ -15,12 +15,12 @@ dependencies.
 
 | Command | Input | Network use | Result |
 | --- | --- | --- | --- |
-| `hecc init` | Provider options | None | Creates private configuration and a random local key |
-| `hecc protect` | Original UTF-8 text on stdin | Sends original text to the configured trusted provider | Prints text with detected spans encrypted |
-| `hecc decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
-| `hecc chat` | Prompts in a terminal editor | Detector, then Claude Code | Streams replies in a protected conversation |
-| `hecc sandbox-build` | No prompt | Downloads the container runtime | Builds the local sandbox image |
-| `hecc claude` | Native terminal UI or stdin with `--print` | Inspected model requests; other network traffic blocked | Native Claude with subscription OAuth and local tools |
+| `sealgate init` | Provider options | None | Creates private configuration and a random local key |
+| `sealgate protect` | Original UTF-8 text on stdin | Sends original text to the configured trusted provider | Prints text with detected spans encrypted |
+| `sealgate decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
+| `sealgate chat` | Prompts in a terminal editor | Detector, then Claude Code | Streams replies in a protected conversation |
+| `sealgate sandbox-build` | No prompt | Downloads the container runtime | Builds the local sandbox image |
+| `sealgate claude` | Native terminal UI or stdin with `--print` | Inspected model requests; other network traffic blocked | Native Claude with subscription OAuth and local tools |
 
 Protection and decryption accept multiline terminal input ending at EOF, or a file
 redirected to stdin. They reject prompt text in command-line arguments. A complete
@@ -30,13 +30,13 @@ result goes to stdout without an added newline; diagnostics go to stderr.
 
 Initialization generates a 32-byte key using the operating system's cryptographic
 random source. By default, the binary key and `config.json` live in
-`~/.config/hecc/`. The directory is mode `700`; files are mode `600`. The CLI checks
+`~/.config/sealgate/`. The directory is mode `700`; files are mode `600`. The CLI checks
 ownership and permissions when loading them and rejects storage within Git
 repositories. Initialization never implicitly rotates an existing key.
 
 The configuration stores the provider base URL, model, credential environment
 variable name, timeout, detection instructions, and additional sensitive
-categories. `hecc protect` can override provider settings using `.env` in its
+categories. `sealgate protect` can override provider settings using `.env` in its
 current working directory. Exported environment variables take precedence over
 `.env`, which takes precedence over `config.json`.
 
@@ -97,13 +97,13 @@ the detector found every secret. See [detection limits](security.md#detection-is
 ## Encrypting the matched text
 
 For every new encrypted span, the CLI creates a fresh 12-byte random nonce and encrypts
-the exact UTF-8 bytes with AES-256-GCM. It authenticates `hecc:v1` as additional
+the exact UTF-8 bytes with AES-256-GCM. It authenticates `sealgate:v1` as additional
 authenticated data and obtains a 16-byte authentication tag.
 
 The resulting marker has this format:
 
 ```text
-[[HECC:v1:PAYLOAD]]
+[[SEALGATE:v1:PAYLOAD]]
 
 PAYLOAD = base64url(nonce || authentication tag || ciphertext)
 ```
@@ -117,7 +117,7 @@ below is illustrative, not a valid ciphertext payload:
 
 ```text
 Original:  Draft a reply to alex@example.test.
-Protected: Draft a reply to [[HECC:v1:...]].
+Protected: Draft a reply to [[SEALGATE:v1:...]].
 ```
 
 The CLI assembles the entire output before printing it. If a later detection entry
@@ -126,15 +126,15 @@ ranges remains unchanged.
 
 ## Decryption and authentication
 
-`hecc decrypt` loads only the local key. It does not load the provider's `.env`
-settings or contact a model. It finds each reserved `[[HECC:` marker, checks the
+`sealgate decrypt` loads only the local key. It does not load the provider's `.env`
+settings or contact a model. It finds each reserved `[[SEALGATE:` marker, checks the
 version and encoding, extracts the nonce and tag, and authenticates the ciphertext
 before restoring UTF-8 text.
 
 An incorrect key or altered ciphertext causes failure. The entire result is
 buffered, so a later invalid marker prevents any earlier plaintext from being
 printed. Text without recognized markers passes through unchanged. The original
-prompt must not contain the reserved `[[HECC:` prefix; protection rejects it to
+prompt must not contain the reserved `[[SEALGATE:` prefix; protection rejects it to
 avoid confusing ordinary text with ciphertext.
 
 Authentication applies to individual spans. It does not authenticate surrounding
@@ -156,13 +156,13 @@ tool and never automatically restores plaintext into Claude's context.
 
 ## Terminal chat
 
-`hecc chat` runs a full-screen terminal editor using Node's terminal and readline
+`sealgate chat` runs a full-screen terminal editor using Node's terminal and readline
 primitives. Enter inserts newlines; Ctrl-S submits the draft. Pasted text stays in
 the editor until submitted. The UI uses the terminal's alternate screen and
 restores normal input and display settings when it exits.
 
 On submission, the wrapper passes the draft through the same detector, span
-validation, and local encryption as `hecc protect`. It launches Claude only after
+validation, and local encryption as `sealgate protect`. It launches Claude only after
 that step succeeds. The original draft is then removed from the editor, and the
 conversation displays a protected version with `[encrypted]` labels. This is a
 display abbreviation; the full ciphertext is sent to Claude through stdin.
@@ -179,7 +179,7 @@ that session, never the most recent unrelated conversation. `/new` creates a
 fresh session. Detection errors retain the current session; a failed or canceled
 Claude turn resets it because Claude may have saved an incomplete turn.
 
-The detector's configured credential and all `HECC_*` environment variables are
+The detector's configured credential and all `SEALGATE_*` environment variables are
 removed from the Claude child environment. The local key is never sent through
 stdin or command-line arguments. Claude keeps its normal authentication and
 project context. This is process-input separation, not filesystem isolation: a
@@ -193,14 +193,14 @@ attachments, and resuming a wrapper session after exit are not implemented.
 Ctrl-C cancels detection or terminates the active Claude process group. A process
 that does not exit after termination is killed after two seconds. A Claude turn
 has a ten-minute timeout; detection uses the provider's configured timeout. Ctrl-D
-exits after canceling active work. No plaintext chat log is created by hecc;
+exits after canceling active work. No plaintext chat log is created by sealgate;
 Claude's own session persistence remains enabled for follow-up turns.
 
 ## Source map
 
 | File | Responsibility |
 | --- | --- |
-| [`bin/hecc.ts`](../bin/hecc.ts) | CLI options, stdin, complete stdout results, sanitized errors |
+| [`bin/sealgate.ts`](../bin/sealgate.ts) | CLI options, stdin, complete stdout results, sanitized errors |
 | [`src/config.ts`](../src/config.ts) | Configuration validation, private storage, key initialization |
 | [`src/env.ts`](../src/env.ts) | Provider overrides and credentials from `.env` |
 | [`src/provider.ts`](../src/provider.ts) | Trusted-provider HTTP request and response checks |
@@ -211,8 +211,12 @@ Claude's own session persistence remains enabled for follow-up turns.
 | [`src/tui.ts`](../src/tui.ts) | Terminal editor, protected transcript display, keyboard controls |
 | [`src/request-protection.ts`](../src/request-protection.ts) | Complete JSON inspection, ciphertext cache, signed-block replay ledger |
 | [`src/gateway.ts`](../src/gateway.ts) | OAuth-pinned HTTP gateway, allowed routes, streamed responses |
-| [`src/sandbox.ts`](../src/sandbox.ts) | Native Claude launcher, private login snapshot, Docker confinement |
-| [`sandbox/`](../sandbox/) | Isolated relay, container build, seccomp policy |
+| [`src/launcher.ts`](../src/launcher.ts) | Shared launcher pieces: login from file or Keychain, native binary lookup, runtime snapshot |
+| [`src/sandbox.ts`](../src/sandbox.ts) | Platform dispatch and Linux Docker confinement |
+| [`src/seatbelt.ts`](../src/seatbelt.ts) | macOS sandbox profile parameters and `sandbox-exec` launch |
+| [`src/proxy.ts`](../src/proxy.ts) | Proxy selection from the environment, CONNECT tunnel, egress forwarder |
+| [`src/http.ts`](../src/http.ts) | Redirect-free HTTP client used by the gateway and detector |
+| [`sandbox/`](../sandbox/) | Linux relay, container build, seccomp policy; macOS Seatbelt profile |
 | [`src/types.ts`](../src/types.ts) | Shared types and the runtime object guard |
 | [`scripts/session-start.ts`](../scripts/session-start.ts) | Claude session reminder |
 | [`test/`](../test/) | Synthetic tests and mock provider fixtures |

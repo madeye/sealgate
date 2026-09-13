@@ -8,7 +8,7 @@ const chunks: Buffer[] = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const input = Buffer.concat(chunks).toString('utf8');
 if (process.env.MOCK_RECORD_FILE) await appendFile(process.env.MOCK_RECORD_FILE, JSON.stringify({
-  args, input, heccVariables: Object.keys(process.env).filter(name => name.startsWith('HECC_')),
+  args, input, sealgateVariables: Object.keys(process.env).filter(name => name.startsWith('SEALGATE_')),
   detectorCredentialPresent: Boolean(process.env.TEST_DETECTOR_TOKEN),
 }) + '\n', { mode: 0o600 });
 

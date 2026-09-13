@@ -26,7 +26,7 @@ const callbacks = (): ChatCallbacks & { protected: string[]; replies: string[] }
   };
   return result;
 };
-interface RecordedCall { args: string[]; input: string; heccVariables: string[]; detectorCredentialPresent: boolean }
+interface RecordedCall { args: string[]; input: string; sealgateVariables: string[]; detectorCredentialPresent: boolean }
 async function calls(file: string): Promise<RecordedCall[]> {
   return (await readFile(file, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as RecordedCall);
 }
@@ -37,7 +37,7 @@ test('chat protects each turn, passes only ciphertext on stdin, and resumes its 
   const key = randomBytes(32);
   const baseUrl = await provider(t, (req, res) => answer(res, { sensitive_substrings: ['synthetic@example.test'] }));
   const chat = new ProtectedChat({ config: makeConfig({ baseUrl, model: 'detector', apiKeyEnv: 'TEST_DETECTOR_TOKEN' }), env: { TEST_DETECTOR_TOKEN: 'synthetic-key' } }, key,
-    mockOptions({ MOCK_RECORD_FILE: record, HECC_API_KEY: 'synthetic-key', TEST_DETECTOR_TOKEN: 'synthetic-key' }));
+    mockOptions({ MOCK_RECORD_FILE: record, SEALGATE_API_KEY: 'synthetic-key', TEST_DETECTOR_TOKEN: 'synthetic-key' }));
   const events = callbacks();
   const first = 'Draft a reply to synthetic@example.test.\n';
   const second = 'Now shorten the reply to synthetic@example.test.\n';
@@ -48,7 +48,7 @@ test('chat protects each turn, passes only ciphertext on stdin, and resumes its 
   for (const [index, call] of recorded.entries()) {
     assert.ok(!call.input.includes('synthetic@example.test'));
     assert.ok(!call.args.join(' ').includes('synthetic@example.test'));
-    assert.deepEqual(call.heccVariables, []);
+    assert.deepEqual(call.sealgateVariables, []);
     assert.equal(call.detectorCredentialPresent, false);
     assert.equal(decryptText(call.input, key), index === 0 ? first : second);
     assert.equal(call.args[call.args.indexOf('--permission-mode') + 1], 'dontAsk');
@@ -124,12 +124,12 @@ test('Claude transport handles final-only output, permission denials, bad JSON, 
 
 test('TUI display neutralizes terminal controls and wraps Unicode without breaking graphemes', async t => {
   assert.equal(displayText('\x1b]52;c;payload\x07\u202Ehello'), ']52;c;payloadhello');
-  assert.equal(displayText('Email [[HECC:v1:abc123]]'), 'Email [encrypted]');
+  assert.equal(displayText('Email [[SEALGATE:v1:abc123]]'), 'Email [encrypted]');
   assert.deepEqual(wrapText('a秘密b', 3), ['a秘', '密b']);
   assert.deepEqual(wrapText('👩🏽‍💻ab', 2), ['👩🏽‍💻', 'ab']);
   const result = await cli(['chat'], '', await temporary(t));
   assert.notEqual(result.code, 0);
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /interactive terminal/);
-  assert.deepEqual(claudeEnvironment({ HECC_API_KEY: 'hidden', CUSTOM_DETECTOR: 'hidden', ANTHROPIC_API_KEY: 'claude-key' }, 'CUSTOM_DETECTOR'), { ANTHROPIC_API_KEY: 'claude-key' });
+  assert.deepEqual(claudeEnvironment({ SEALGATE_API_KEY: 'hidden', CUSTOM_DETECTOR: 'hidden', ANTHROPIC_API_KEY: 'claude-key' }, 'CUSTOM_DETECTOR'), { ANTHROPIC_API_KEY: 'claude-key' });
 });

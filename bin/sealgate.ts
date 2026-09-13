@@ -4,23 +4,25 @@ import { configDirectory, initialize, loadConfig, loadKey } from '../src/config.
 import { protectText, decryptText, validatePrompt } from '../src/crypto.js';
 import { detectSensitive } from '../src/provider.js';
 import { providerSettings } from '../src/env.js';
-import { fail, HeccError } from '../src/errors.js';
+import { fail, SealgateError } from '../src/errors.js';
 import { ProtectedChat } from '../src/chat.js';
 import { runTui } from '../src/tui.js';
 import { buildSandbox, launchClaude } from '../src/sandbox.js';
 
 const HELP = `Usage:
-  hecc init --base-url URL --model MODEL [--api-key-env NAME | --no-api-key] [--timeout-ms N]
-  hecc protect < prompt.txt
-  hecc decrypt < protected.txt
-  hecc chat [--model CLAUDE_MODEL]
-  hecc sandbox-build
-  hecc claude [--model CLAUDE_MODEL] [--print]
+  sealgate init --base-url URL --model MODEL [--api-key-env NAME | --no-api-key] [--timeout-ms N]
+  sealgate protect < prompt.txt
+  sealgate decrypt < protected.txt
+  sealgate chat [--model CLAUDE_MODEL]
+  sealgate sandbox-build
+  sealgate claude [--model CLAUDE_MODEL] [--print] [--proxy-egress]
 
-claude runs the native Claude interface inside a Docker network sandbox, protecting
-complete model requests with the local gateway. Run sandbox-build once first.
-Uses your saved subscription login; sign in with claude auth login outside HECC.
-Other network traffic and opaque uploads are blocked. Requires native Linux Claude.
+claude runs the native Claude interface inside an OS sandbox (macOS Seatbelt, or
+Docker on Linux after sandbox-build), protecting complete model requests with the
+local gateway. Uses your saved subscription login; sign in with claude auth login
+outside SEALGATE. Other network traffic and opaque uploads are blocked. The gateway
+honors HTTPS_PROXY/HTTP_PROXY/NO_PROXY. --proxy-egress additionally lets Claude's
+tools reach that proxy; such traffic is not inspected.
 
 chat opens a protected terminal conversation with Claude Code. Ctrl-S sends,
 Enter adds a line, Ctrl-C cancels the active turn or exits when idle.
@@ -29,9 +31,9 @@ protect and decrypt accept UTF-8 text only through stdin. In a terminal, enter
 multiple lines and finish with Ctrl-D (EOF). Input is echoed by your terminal.
 Only the result is written to stdout, with no added newline. Diagnostics use stderr.
 
-Configuration: HECC_CONFIG_DIR, otherwise XDG_CONFIG_HOME/hecc or ~/.config/hecc.
+Configuration: SEALGATE_CONFIG_DIR, otherwise XDG_CONFIG_HOME/sealgate or ~/.config/sealgate.
 init creates a private config.json and a local key outside Git repositories.
-Default API-key variable: HECC_API_KEY. --no-api-key is for unauthenticated providers.
+Default API-key variable: SEALGATE_API_KEY. --no-api-key is for unauthenticated providers.
 Edit config.json to customize detection instructions and additionalCategories.
 protect loads provider settings and the API credential from .env in the current
 directory (mode 600). Exported environment variables take precedence over .env.
@@ -61,25 +63,25 @@ async function main(): Promise<void> {
     if (args.length) fail('sandbox-build accepts no arguments.');
     await buildSandbox(); return;
   }
-  if (!['init', 'protect', 'decrypt', 'chat', 'claude'].includes(command)) fail('Expected a HECC command. Use hecc --help.');
+  if (!['init', 'protect', 'decrypt', 'chat', 'claude'].includes(command)) fail('Expected a SEALGATE command. Use sealgate --help.');
   const dir = configDirectory();
   if (command === 'claude') {
     let values;
-    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' }, print: { type: 'boolean' } }, allowPositionals: false, strict: true })); }
-    catch { fail('Use hecc claude [--model CLAUDE_MODEL] [--print]. Prompts are accepted through the terminal or stdin only.'); }
+    try { ({ values } = parseArgs({ args, options: { model: { type: 'string' }, print: { type: 'boolean' }, 'proxy-egress': { type: 'boolean' } }, allowPositionals: false, strict: true })); }
+    catch { fail('Use sealgate claude [--model CLAUDE_MODEL] [--print] [--proxy-egress]. Prompts are accepted through the terminal or stdin only.'); }
     if (values.model !== undefined && !/^[a-zA-Z0-9._:-]{1,128}$/.test(values.model)) fail('Invalid Claude model.');
     const settings = await providerSettings(await loadConfig(dir));
     const key = await loadKey(dir);
-    try { process.exitCode = await launchClaude(settings, key, dir, values); }
+    try { process.exitCode = await launchClaude(settings, key, dir, { model: values.model, print: values.print, proxyEgress: values['proxy-egress'] }); }
     finally { key.fill(0); }
     return;
   }
   if (command === 'chat') {
     let values;
     try { ({ values } = parseArgs({ args, options: { model: { type: 'string' } }, allowPositionals: false, strict: true })); }
-    catch { fail('Invalid chat options. Use hecc chat [--model CLAUDE_MODEL].'); }
+    catch { fail('Invalid chat options. Use sealgate chat [--model CLAUDE_MODEL].'); }
     if (values.model !== undefined && !values.model.trim()) fail('Claude model must not be empty.');
-    if (!process.stdin.isTTY || !process.stdout.isTTY) fail('hecc chat requires an interactive terminal. Use hecc protect for piped input.');
+    if (!process.stdin.isTTY || !process.stdout.isTTY) fail('sealgate chat requires an interactive terminal. Use sealgate protect for piped input.');
     const settings = await providerSettings(await loadConfig(dir));
     const key = await loadKey(dir);
     try { await runTui(new ProtectedChat(settings, key, { model: values.model })); }
@@ -94,15 +96,15 @@ async function main(): Promise<void> {
         'api-key-env': { type: 'string' }, 'no-api-key': { type: 'boolean' },
         'timeout-ms': { type: 'string' },
       }, allowPositionals: false, strict: true }));
-    } catch { fail('Invalid init options. Use hecc --help.'); }
-    if (!values['base-url'] || !values.model) fail('init requires --base-url and --model. Use hecc --help.');
+    } catch { fail('Invalid init options. Use sealgate --help.'); }
+    if (!values['base-url'] || !values.model) fail('init requires --base-url and --model. Use sealgate --help.');
     if (values['no-api-key'] && values['api-key-env']) fail('Choose --api-key-env or --no-api-key.');
     await initialize(dir, {
       baseUrl: values['base-url'], model: values.model,
       apiKeyEnv: values['no-api-key'] ? null : values['api-key-env'],
       timeoutMs: values['timeout-ms'] === undefined ? undefined : Number(values['timeout-ms']),
     });
-    process.stderr.write('hecc: Initialized private config.json and key. Back up the key securely before use.\n');
+    process.stderr.write('sealgate: Initialized private config.json and key. Back up the key securely before use.\n');
     return;
   }
   if (args.length) fail('protect and decrypt accept no arguments; supply text through stdin.');
@@ -110,7 +112,7 @@ async function main(): Promise<void> {
   const settings = command === 'protect' ? await providerSettings(await loadConfig(dir)) : undefined;
   const key = await loadKey(dir);
   try {
-    if (process.stdin.isTTY) process.stderr.write('hecc: Enter text; finish with Ctrl-D on an empty line. Terminal echo is enabled.\n');
+    if (process.stdin.isTTY) process.stderr.write('sealgate: Enter text; finish with Ctrl-D on an empty line. Terminal echo is enabled.\n');
     const input = await readInput(command === 'protect' ? 1024 * 1024 : 16 * 1024 * 1024);
     let output: string;
     if (settings) {
@@ -123,11 +125,11 @@ async function main(): Promise<void> {
 }
 
 process.stdout.on('error', () => {
-  process.stderr.write('hecc: Cannot write output.\n');
+  process.stderr.write('sealgate: Cannot write output.\n');
   process.exitCode = 1;
 });
 
 main().catch(error => {
-  process.stderr.write(`hecc: ${error instanceof HeccError ? error.message : 'Operation failed; no output was produced.'}\n`);
+  process.stderr.write(`sealgate: ${error instanceof SealgateError ? error.message : 'Operation failed; no output was produced.'}\n`);
   process.exitCode = 1;
 });

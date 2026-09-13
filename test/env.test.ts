@@ -11,13 +11,13 @@ const config = makeConfig({ baseUrl: 'http://localhost:8000/v1', model: 'default
 test('.env provider settings override config; exported settings override .env', async t => {
   const cwd = await temporary(t);
   await writeFile(path.join(cwd, '.env'), [
-    'HECC_BASE_URL=http://127.0.0.1:8080/v1',
-    'HECC_MODEL="local model"',
-    'HECC_TIMEOUT_MS=120000',
-    'HECC_ENABLE_THINKING=false',
-    'HECC_API_KEY_ENV=LOCAL_TEST_TOKEN',
+    'SEALGATE_BASE_URL=http://127.0.0.1:8080/v1',
+    'SEALGATE_MODEL="local model"',
+    'SEALGATE_TIMEOUT_MS=120000',
+    'SEALGATE_ENABLE_THINKING=false',
+    'SEALGATE_API_KEY_ENV=LOCAL_TEST_TOKEN',
     'LOCAL_TEST_TOKEN="synthetic#credential"',
-    'HECC_CONFIG_DIR=/must/not/move/key',
+    'SEALGATE_CONFIG_DIR=/must/not/move/key',
     'NODE_OPTIONS=--must-not-be-used',
   ].join('\n'), { mode: 0o600 });
   const settings = await providerSettings(config, { cwd, env: {} });
@@ -26,21 +26,21 @@ test('.env provider settings override config; exported settings override .env', 
   assert.equal(settings.config.timeoutMs, 120000);
   assert.equal(settings.config.enableThinking, false);
   assert.deepEqual(settings.env, { LOCAL_TEST_TOKEN: 'synthetic#credential' });
-  assert.equal(Object.hasOwn(settings.config, 'HECC_CONFIG_DIR'), false);
+  assert.equal(Object.hasOwn(settings.config, 'SEALGATE_CONFIG_DIR'), false);
   assert.equal(config.model, 'default');
-  const exported = await providerSettings(config, { cwd, env: { HECC_MODEL: 'exported-model', LOCAL_TEST_TOKEN: 'exported-key', HECC_ENABLE_THINKING: 'true' } });
+  const exported = await providerSettings(config, { cwd, env: { SEALGATE_MODEL: 'exported-model', LOCAL_TEST_TOKEN: 'exported-key', SEALGATE_ENABLE_THINKING: 'true' } });
   assert.equal(exported.config.model, 'exported-model');
   assert.equal(exported.config.enableThinking, true);
-  await assert.rejects(providerSettings(config, { cwd, env: { HECC_ENABLE_THINKING: 'no' } }), /true or false/);
+  await assert.rejects(providerSettings(config, { cwd, env: { SEALGATE_ENABLE_THINKING: 'no' } }), /true or false/);
   assert.equal(exported.env.LOCAL_TEST_TOKEN, 'exported-key');
 });
 
 test('missing .env preserves config and explicit empty API-key name disables auth', async t => {
   const cwd = await temporary(t);
-  const settings = await providerSettings(config, { cwd, env: { HECC_API_KEY: 'synthetic-key' } });
+  const settings = await providerSettings(config, { cwd, env: { SEALGATE_API_KEY: 'synthetic-key' } });
   assert.deepEqual(settings.config, config);
-  assert.equal(settings.env.HECC_API_KEY, 'synthetic-key');
-  await writeFile(path.join(cwd, '.env'), 'HECC_API_KEY_ENV=\n', { mode: 0o600 });
+  assert.equal(settings.env.SEALGATE_API_KEY, 'synthetic-key');
+  await writeFile(path.join(cwd, '.env'), 'SEALGATE_API_KEY_ENV=\n', { mode: 0o600 });
   const noAuth = await providerSettings(config, { cwd, env: {} });
   assert.equal(noAuth.config.apiKeyEnv, null);
   assert.deepEqual(noAuth.env, {});
@@ -49,9 +49,9 @@ test('missing .env preserves config and explicit empty API-key name disables aut
 test('unsafe .env permissions, links, and invalid provider settings fail closed', async t => {
   const cwd = await temporary(t);
   const file = path.join(cwd, '.env');
-  await writeFile(file, 'HECC_TIMEOUT_MS=invalid', { mode: 0o600 });
+  await writeFile(file, 'SEALGATE_TIMEOUT_MS=invalid', { mode: 0o600 });
   await assert.rejects(providerSettings(config, { cwd, env: {} }), /Invalid configuration/);
-  await writeFile(file, 'HECC_BASE_URL=http://remote.example/v1');
+  await writeFile(file, 'SEALGATE_BASE_URL=http://remote.example/v1');
   await assert.rejects(providerSettings(config, { cwd, env: {} }), /HTTPS/);
   await chmod(file, 0o644);
   await assert.rejects(providerSettings(config, { cwd, env: {} }), /mode 600/);
@@ -72,7 +72,7 @@ test('CLI uses .env for detection and decrypt ignores even an invalid .env', asy
   });
   await initialize(cwd, { baseUrl: 'http://localhost:1/v1', model: 'wrong-model' });
   const file = path.join(cwd, '.env');
-  await writeFile(file, `HECC_BASE_URL=${baseUrl}\nHECC_MODEL=dotenv-model\nHECC_API_KEY=synthetic-dotenv-key\n`, { mode: 0o600 });
+  await writeFile(file, `SEALGATE_BASE_URL=${baseUrl}\nSEALGATE_MODEL=dotenv-model\nSEALGATE_API_KEY=synthetic-dotenv-key\n`, { mode: 0o600 });
   const original = 'Write to synthetic@example.test.\n';
   const result = await cli(['protect'], original, cwd);
   assert.equal(result.code, 0, result.stderr);
@@ -80,7 +80,7 @@ test('CLI uses .env for detection and decrypt ignores even an invalid .env', asy
   assert.ok(request);
   assert.equal(request.body.model, 'dotenv-model');
   assert.equal(request.auth, 'Bearer synthetic-dotenv-key');
-  await writeFile(file, 'HECC_TIMEOUT_MS=invalid');
+  await writeFile(file, 'SEALGATE_TIMEOUT_MS=invalid');
   const failed = await cli(['protect'], original, cwd);
   assert.notEqual(failed.code, 0);
   assert.equal(failed.stdout, '');

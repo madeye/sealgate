@@ -9,6 +9,8 @@ export interface Config {
   detectionInstructions: string;
   additionalCategories: string[];
   enableThinking?: boolean;
+  /** Extra host paths readable inside the macOS sandbox. */
+  sandboxReadPaths?: string[];
 }
 
 export interface InitOptions {
