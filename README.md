@@ -399,6 +399,11 @@ task requires interpreting the hidden values.
 
 ## Verify
 
+Follow the [step-by-step tool verification guide](docs/verification.md) for
+captured input/output, pass conditions, and a reproducible local verification run.
+The [full transcript](docs/verification-output.txt) includes CLI streams and
+detector/gateway HTTP bodies using synthetic data.
+
 ```sh
 npm run typecheck
 npm test
