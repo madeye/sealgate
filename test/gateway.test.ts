@@ -80,8 +80,9 @@ test('complete request encryption: system, history, Unicode, tools, schema, meta
 
 test('no matches preserve data; overlapping matches merge; repeated history and issued ciphertext can be replayed', async () => {
   const key = randomBytes(32);
-  const protector = new RequestProtector(key, async text => ({ sensitive_substrings: ['aba', 'bab'].filter(s => text.includes(s)) }));
-  const body = request('Keep ababa here.');
+  // Non-hex letters cannot accidentally match the random UUID field separator.
+  const protector = new RequestProtector(key, async text => ({ sensitive_substrings: ['xyx', 'yxy'].filter(s => text.includes(s)) }));
+  const body = request('Keep xyxyx here.');
   const first = await protector.protect(body);
   assert.deepEqual(restore(JSON.parse(first.body), key), body);
   assert.equal((first.body.match(/\[\[SEALGATE:/g) ?? []).length, 1);
