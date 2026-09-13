@@ -1,7 +1,8 @@
 # Native Claude with an inspected outbound gateway
 
-`sealgate claude` runs the installed native Claude Code binary inside a Linux Docker
-sandbox. You use Claude's normal terminal interface and permission dialogs.
+`sealgate claude` runs the installed native Claude Code binary inside an OS
+sandbox: the macOS sandbox (Seatbelt, applied with `sandbox-exec`) or a Linux
+Docker sandbox. You use Claude's normal terminal interface and permission dialogs.
 Before an inference request leaves the machine, a host-side gateway inspects its
 complete JSON body with the configured trusted detector and encrypts sensitive
 text locally. The binary is mounted read-only; SEALGATE does not patch it.
@@ -9,8 +10,8 @@ text locally. The binary is mounted read-only; SEALGATE does not patch it.
 ```mermaid
 flowchart LR
     U[Native Claude terminal] --> C[Claude and local tools]
-    C -->|Only permitted route| R[Isolated loopback relay]
-    R -->|Unix socket| G[Host SEALGATE gateway]
+    C -->|Only permitted route| R[Loopback port: relay on Linux, direct on macOS]
+    R --> G[Host SEALGATE gateway]
     G -->|Original request text| V[Trusted local vLLM]
     V -->|Exact sensitive spans| G
     K[Local key outside sandbox] --> G
@@ -22,32 +23,38 @@ flowchart LR
 
 ## Start
 
-Requires Linux ARM64 or x86-64, Node.js 22+, a local Docker daemon with seccomp,
-and the native Linux `claude` binary on PATH. Docker builds a small runtime with
-Node, Bash, Git and ripgrep. It mounts your installed Claude binary into that
-runtime; it does not download or redistribute Claude.
+Requires Node.js 22+ and the native `claude` binary on PATH, plus either macOS
+ARM64/x86-64 (the built-in `sandbox-exec` is used; nothing to build) or Linux
+ARM64/x86-64 with a local Docker daemon with seccomp. On Linux, Docker builds a
+small runtime with Node, Bash, Git and ripgrep and mounts your installed Claude
+binary into it; SEALGATE does not download or redistribute Claude.
 
 After initializing SEALGATE and configuring the trusted provider in a private `.env`:
 
 ```sh
 npm ci
-sealgate sandbox-build
+sealgate sandbox-build   # Linux only
 claude auth login
 sealgate claude
 ```
 
 Use `sealgate claude --model MODEL` to select a Claude model. For a single prompt from
 stdin, use `sealgate claude --print < prompt.txt`. Prompts are never accepted as CLI
-arguments. The detector model and endpoint still come from your existing SEALGATE
-configuration and `.env`; decryption remains an explicit offline `sealgate decrypt`
-operation outside Claude. vLLM detects spans; Node's AES-256-GCM encrypts them.
+arguments. `--proxy-egress` is described under HTTP proxies below. The detector
+model and endpoint still come from your existing SEALGATE configuration and
+`.env`; decryption remains an explicit offline `sealgate decrypt` operation
+outside Claude. vLLM detects spans; Node's AES-256-GCM encrypts them.
 
-Run from the project directory you want Claude to edit. It is mounted read-write
-at `/workspace`. Normal file edits persist in that directory. Tools use the
-container's installed programs, so host-only binaries and paths are unavailable.
-The project root `.env` is masked with an empty read-only file, and the encryption
-key directory is never mounted. Host environment variables are not forwarded.
-Do not put copies of your SEALGATE key or detector credential elsewhere in the project.
+Run from the project directory you want Claude to edit; it is writable and edits
+persist. On macOS the project keeps its real path, system directories and
+Homebrew are readable, and your home directory, `/Users`, `/Volumes` and the
+per-user temporary tree are hidden except the project, the Claude binary and
+the read-only `sandboxReadPaths` from `config.json`. On Linux the project is
+mounted at `/workspace` and tools use the container's programs. On both, the
+root `.env` is hidden (Linux masks it with an empty file; macOS denies reads,
+so tools see a permission error), the key directory is never exposed, and host
+environment variables are not forwarded. Do not put copies of your SEALGATE key
+or detector credential elsewhere in the project.
 
 The native interface keeps normal tool approval behavior. User-level hooks,
 plugins, settings, and MCP configuration are not imported from your host home.
@@ -74,9 +81,13 @@ Anthropic must receive its own OAuth credential, and the detector never sees it.
 Login and token refresh are performed **outside** the sandbox with `claude auth
 login`. An expired saved token stops launch. If it expires during a session, exit,
 sign in again and relaunch. OAuth browser flows and refresh endpoints are not
-general-purpose routes through SEALGATE. This version reads Linux's private
-`.claude/.credentials.json`, including a custom `CLAUDE_CONFIG_DIR`; it does not
-extract credentials from macOS Keychain or support cloud-provider authentication.
+general-purpose routes through SEALGATE. The login is read from the private
+`.claude/.credentials.json` file when it exists (including a custom
+`CLAUDE_CONFIG_DIR`), otherwise on macOS from the default Keychain item
+`Claude Code-credentials` through the `security` tool. A copy is placed in the
+temporary Claude home and `CLAUDE_CONFIG_DIR` points there, so the sandboxed
+Claude uses the file and never touches your real Keychain entry, which the
+profile also denies. Cloud-provider authentication is not supported.
 
 ## What is inspected
 
@@ -124,6 +135,29 @@ interpreting hidden data.
 
 ## Network enforcement and limits
 
+### macOS
+
+On macOS there is no relay: the gateway listens on a random loopback port and the
+Seatbelt profile in [`sandbox/profile.sb`](../sandbox/profile.sb) permits outbound
+connections to that port only. The profile is deny-by-default and modeled on the
+allowlist Claude Code's own sandbox runtime uses. DNS, other loopback ports, Unix
+sockets, listening sockets, the Keychain, LaunchServices (`open`), Apple Events,
+`launchctl` job submission, Spotlight and the clipboard are denied; setuid
+programs such as `ps` and `sudo` cannot start under any Seatbelt profile. Host
+paths reach the profile only as `sandbox-exec -D` parameters, never by string
+interpolation. See [sandbox/macos.md](../sandbox/macos.md) for the rationale.
+
+This is a weaker boundary than Docker: the sandbox shares the host kernel and
+Mach IPC namespace, so a kernel or sandbox bug is a full escape, and Apple has
+deprecated `sandbox-exec` while continuing to ship it. If it is missing, the
+launcher exits rather than running Claude unconfined. Claude Code's built-in
+Bash sandbox cannot start inside SEALGATE (nested profiles are refused), local
+development servers cannot listen, Claude's process-listing features degrade
+because `ps` is unavailable, and the pseudo-terminal write rule needed for child
+processes also covers your other terminals.
+
+### Linux
+
 The relay starts with Docker's `none` network. Claude joins that network namespace
 but has separate filesystem/process isolation and a stricter seccomp profile.
 Only the relay can open the host gateway socket; it has no external network
@@ -135,9 +169,23 @@ Only model requests accepted and transformed by the gateway are forwarded.
 
 This is intentionally a restricted network environment, not a transparent proxy
 for arbitrary HTTPS services. A future endpoint must receive an explicit policy
-before it can be used. There is no CONNECT tunnel, generic forward proxy,
-redirect following, or fallback that sends original text. If Docker isolation
-cannot start, the launcher exits rather than running Claude on the host.
+before it can be used. There is no generic forward proxy, redirect following, or
+fallback that sends original text. If isolation cannot start, the launcher exits
+rather than running Claude on the host.
+
+### HTTP proxies
+
+The gateway reaches Anthropic through the `HTTPS_PROXY` (or `HTTP_PROXY` for a
+plain-HTTP loopback test upstream) from the host environment using an HTTP
+CONNECT tunnel that SEALGATE implements itself; Node's `fetch` is not used. The
+proxy must be `http://host:port`, optionally with credentials; `NO_PROXY`
+entries and loopback targets connect directly. The same rule applies to a
+remote detector. With `--proxy-egress`, the host also runs a byte-level
+forwarder from a loopback port (macOS) or the relay's port 17841 (Linux) to that
+proxy, and the sandbox environment points `HTTPS_PROXY`/`HTTP_PROXY` at it while
+`NO_PROXY` keeps model requests on the gateway. The forwarder parses nothing, so
+anything a tool sends through it leaves the machine uninspected; proxy
+credentials in the environment URL are passed to the sandbox unchanged.
 Docker's [none network](https://docs.docker.com/engine/network/drivers/none/) and
 [seccomp documentation](https://docs.docker.com/engine/security/seccomp/) describe
 the underlying controls. The included policy and attribution are in
@@ -167,23 +215,27 @@ covert channels through a compromised host.
 
 ```sh
 npm test
-sealgate sandbox-build
-npm run test:sandbox
+npm run test:seatbelt          # macOS
+sealgate sandbox-build && npm run test:sandbox   # Linux
 ```
 
 The normal suite uses mock vLLM and Anthropic services and needs no subscription.
-The explicit sandbox suite starts disposable containers, tests direct TCP/DNS
-and Unix-socket escape attempts, checks hidden credentials and persistent file
-edits, and runs the installed native Claude binary against a mock Anthropic SSE
-service. It checks prompt, CLAUDE.md and Read-tool-result protection. Set
+The platform suites test direct TCP/DNS, loopback, Unix-socket and (on macOS)
+Keychain, `open`, Apple Events, `launchctl` and clipboard escape attempts, check
+hidden credentials, opt-in read paths, the proxy forwarder and persistent file
+edits, and run the installed native Claude binary against a mock Anthropic SSE
+service. They check prompt, CLAUDE.md and Read-tool-result protection. Set
 `SEALGATE_TEST_CLAUDE=/absolute/path/to/claude` if the native binary is not under
-`~/.local/bin`. These tests use synthetic OAuth credentials.
+`~/.local/bin`. These tests use synthetic OAuth credentials. While changing the
+macOS profile, watch denials with
+`/usr/bin/log stream --style compact --predicate 'sender == "Sandbox"'`.
 
 A live subscription smoke test additionally needs a current login. Passing mock
 tests verifies transport and interception; it does not prove a specific account
 currently has service access or that all future Claude versions are compatible.
 
 To exercise native Claude and your configured live vLLM together against the mock
-remote service, run `SEALGATE_TEST_LIVE=1 npm run test:sandbox`. Only synthetic fixture
+remote service, run `SEALGATE_TEST_LIVE=1 npm run test:sandbox` (Linux) or
+`SEALGATE_TEST_LIVE=1 npm run test:seatbelt` (macOS). Only synthetic fixture
 text is used; this loads your existing private SEALGATE detector configuration. It
 can take several minutes and still requires no live Anthropic subscription.

@@ -112,7 +112,7 @@
         </p>
         <p>
           <strong>Enforced network boundary</strong
-          ><span>Docker isolation with a local gateway</span>
+          ><span>OS sandbox with a local gateway</span>
         </p>
       </div>
 
@@ -121,9 +121,10 @@
           <p class="eyebrow">01 / GET STARTED</p>
           <h2 id="start-title">From checkout to<br />protected requests.</h2>
           <p>
-            The native launcher requires Linux ARM64 or x86-64, Node.js 22+, a
-            local Docker daemon with seccomp, and the native Linux
-            <code>claude</code> binary on your PATH.
+            The native launcher requires Node.js 22+, the native
+            <code>claude</code> binary on your PATH, and either macOS (ARM64 or
+            x86-64, using the built-in sandbox) or Linux ARM64/x86-64 with a
+            local Docker daemon.
           </p>
         </div>
         <div class="steps">
@@ -197,19 +198,20 @@ SEALGATE_ENABLE_THINKING=false</code></pre>
           <article class="step">
             <span class="step-number" aria-hidden="true">04</span>
             <div>
-              <h3>Build the sandbox and launch Claude</h3>
+              <h3>Sign in and launch Claude</h3>
               <p>
-                Build the runtime once, sign in outside the sandbox, then launch
-                from your project directory.
+                Sign in outside the sandbox, then launch from your project
+                directory. Linux builds the Docker runtime once first.
               </p>
-              <pre><code>sealgate sandbox-build
+              <pre><code>sealgate sandbox-build   # Linux only
 claude auth login
 sealgate claude</code></pre>
               <p class="small">
-                The first build downloads system packages. Your project is
-                writable at <code>/workspace</code> inside the container; edits
-                persist. The project root <code>.env</code> is masked, and your
-                SEALGATE key directory is not mounted.
+                Your project is writable and edits persist. The project root
+                <code>.env</code>, your key directory and, on macOS, your home
+                directory are hidden from Claude. Add
+                <code>--proxy-egress</code> to let tools use your HTTP proxy;
+                that tunnel is not inspected.
               </p>
             </div>
           </article>
@@ -253,10 +255,10 @@ sealgate claude</code></pre>
               <span class="node-icon" aria-hidden="true">&gt;_</span>
               <h3>Native Claude</h3>
               <p>Terminal, context,<br />history, local tools</p>
-              <span class="node-tag">DOCKER SANDBOX</span>
+              <span class="node-tag">OS SANDBOX</span>
             </div>
             <div class="flow-arrow" aria-hidden="true">
-              →<small>local relay</small>
+              →<small>loopback only</small>
             </div>
             <div class="flow-node gateway-node">
               <span class="node-icon" aria-hidden="true">[h]</span>
@@ -325,9 +327,10 @@ sealgate claude</code></pre>
             <span class="mini-label">ENFORCE</span>
             <h3>Block uninspected routes</h3>
             <p>
-              A separate relay connects a networkless Docker namespace to the
-              host gateway through a Unix socket. Claude’s container cannot open
-              host Unix sockets or reach external networks directly.
+              On macOS a deny-by-default Seatbelt profile permits one outbound
+              route: the gateway’s loopback port. On Linux a relay connects a
+              networkless Docker namespace to the host gateway through a Unix
+              socket. DNS, other sockets and IPC escape routes are denied.
             </p>
             <p>
               Failed detection, unsupported requests, or encryption errors block
@@ -391,7 +394,7 @@ sealgate decrypt &lt; protected.txt</code></pre>
             <p class="small">
               <kbd>Enter</kbd> adds a line; <kbd>Ctrl-S</kbd> protects and
               sends. Files, tool results, and other context are outside this
-              wrapper’s protection. It does not provide the Docker network
+              wrapper’s protection. It does not provide the sandbox network
               boundary.
             </p>
           </article>
@@ -468,8 +471,8 @@ sealgate decrypt &lt; protected.txt</code></pre>
           <h3>Local trust still matters</h3>
           <p>
             Local Claude sees original text and can retain it in temporary
-            session files. Your terminal, detector, host, Docker daemon, and
-            kernel must be trusted. Project files remain writable. Encryption
+            session files. Your terminal, detector, host, Docker daemon or
+            macOS sandbox, and kernel must be trusted. Project files remain writable. Encryption
             leaks approximate span lengths and positions; surrounding text may
             reveal information too.
           </p>
@@ -539,13 +542,13 @@ sealgate decrypt &lt; protected.txt</code></pre>
             <details>
               <summary>How can I verify my setup?</summary>
               <p>
-                From the checkout, run the unit tests and optional Docker
+                From the checkout, run the unit tests and the platform
                 integration suite. The latter runs native Claude against a mock
                 remote service using synthetic credentials.
               </p>
               <pre><code>npm test
-sealgate sandbox-build
-npm run test:sandbox</code></pre>
+npm run test:seatbelt                            # macOS
+sealgate sandbox-build &amp;&amp; npm run test:sandbox   # Linux</code></pre>
               <p>
                 To include your configured live vLLM detector with synthetic
                 fixture text:

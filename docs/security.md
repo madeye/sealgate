@@ -16,7 +16,7 @@ participant receives and the limits to consider when using the output.
 
 The table describes the prompt-only workflows. In `sealgate claude`, **local Claude
 sees original text**; the gateway protects it before it reaches remote Anthropic.
-The Docker launcher hides the host key directory, provider environment and root
+The sandbox launcher hides the host key directory, provider environment and root
 `.env`, and permits network access only through the inspecting gateway. Anthropic
 receives its own subscription OAuth credential as required for authentication;
 that credential is not sent to the detector. See [gateway boundaries](gateway.md).
@@ -100,13 +100,18 @@ and other context remain outside protection. The `sealgate claude` gateway inste
 inspects all supported outgoing model-request text, including file/tool context
 and history. Opaque uploads and unknown protocols are blocked. Other network
 traffic cannot bypass the gateway because the native CLI and its descendants run
-in a networkless Docker namespace with host Unix sockets denied by seccomp.
+in a networkless Docker namespace with host Unix sockets denied by seccomp
+(Linux), or under a deny-by-default Seatbelt profile whose only network route is
+the gateway port (macOS). The optional `--proxy-egress` tunnel is the one
+deliberate, uninspected exception and is off by default.
 
 This protects remote egress, not local plaintext at rest. Native Claude can keep
 original content in the temporary home until it is removed on exit. The project
 is writable, so tool changes to files persist. Host programs that later execute
-those files are outside confinement. The host kernel, Docker daemon, SEALGATE process,
-terminal and trusted detector remain trusted. Encoded secrets and adversarial
+those files are outside confinement. The host kernel, Docker daemon or macOS
+sandbox, SEALGATE process, terminal and trusted detector remain trusted. The
+macOS sandbox shares the host kernel and IPC namespace and is the weaker of the
+two boundaries. Encoded secrets and adversarial
 inputs can evade model detection; interception is not a guarantee of detection.
 Read [the full gateway guide](gateway.md) for supported features and limits.
 

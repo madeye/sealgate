@@ -4,8 +4,8 @@
 
 Encrypt sensitive text before Claude Code sends it remotely. `sealgate claude` keeps
 Claude's native terminal interface and subscription login, with a local gateway
-that inspects complete model requests and a Docker sandbox that blocks other
-network traffic. Your configured **trusted detection provider**, such as local
+that inspects complete model requests and an OS sandbox (the macOS sandbox, or
+Docker on Linux) that blocks other network traffic. Your configured **trusted detection provider**, such as local
 vLLM, identifies sensitive spans; Node encrypts them with a local AES-256-GCM key.
 
 For narrower workflows, `sealgate protect` prints a protected prompt for pasting and
@@ -34,9 +34,10 @@ and limitations. The instructions below cover installation and configuration.
 ## Install
 
 Requires Node.js 22 or later. The enforced `sealgate claude` launcher additionally
-requires Linux ARM64 or x86-64, a local Docker daemon, and the native Linux Claude
-binary. Manual preprocessing and the older chat wrapper also work on macOS or
-WSL. The project is written in
+requires the native `claude` binary on PATH and either macOS (ARM64 or x86-64,
+using the built-in `sandbox-exec` sandbox) or Linux ARM64/x86-64 with a local
+Docker daemon. Manual preprocessing and the older chat wrapper also work on WSL.
+The project is written in
 TypeScript and compiles to Node.js ES modules in `dist/`. TypeScript and Node type
 definitions are development dependencies; the installed CLI has no runtime npm
 dependencies. From this checkout:
@@ -114,7 +115,8 @@ Edit the private `config.json` to change settings. Its complete schema is:
   "apiKeyEnv": "SEALGATE_API_KEY",
   "timeoutMs": 30000,
   "detectionInstructions": "Detect credentials, personal identifiers, contact details, financial information, and explicitly marked confidential content.",
-  "additionalCategories": ["Unreleased project names", "Internal customer identifiers"]
+  "additionalCategories": ["Unreleased project names", "Internal customer identifiers"],
+  "sandboxReadPaths": ["/Users/you/.cargo", "/Users/you/.rustup"]
 }
 ```
 
@@ -123,7 +125,12 @@ categories. `additionalCategories` extends them; editing `detectionInstructions`
 replaces the category instructions. Use `apiKeyEnv: null` for no Authorization
 header. Never place an API key itself in this file. The timeout is an integer from
 1 to 300000 milliseconds and covers the entire HTTP response; set its initial
-value with `--timeout-ms`. Unknown configuration fields are rejected.
+value with `--timeout-ms`. The optional `sandboxReadPaths` lists up to 32 absolute
+host paths that the macOS sandbox may read (never write); it is how toolchains
+installed under your home directory, such as `~/.cargo` or `~/.nvm`, become
+available to Claude's tools, and each entry's `bin` directory joins the sandbox
+PATH. Entries may not be your home directory, the key directory, or `~/.claude`.
+Unknown configuration fields are rejected.
 
 ### Local vLLM with `.env`
 
@@ -162,37 +169,61 @@ out of prompts and source control.
 
 ## Native Claude with automatic request protection
 
-After initializing the key and configuring the detector:
+After initializing the key and configuring the detector, sign in outside the
+sandbox and launch from your project directory. On macOS nothing else is needed;
+on Linux, build the Docker runtime once first:
 
 ```sh
-sealgate sandbox-build
+sealgate sandbox-build   # Linux only
 claude auth login
 sealgate claude
 ```
 
-Claude's native terminal interface and permission dialogs run inside a Docker
-sandbox. A local gateway protects detected text in system context, prompts,
-history, tool inputs, file contents and tool results before forwarding model
-requests. Use `sealgate claude --model MODEL` to select a model, or
+Claude's native terminal interface and permission dialogs run inside an OS
+sandbox: the macOS sandbox (`sandbox-exec`, the same mechanism Claude Code's own
+Bash sandbox uses) or a Docker network sandbox on Linux. A local gateway
+protects detected text in system context, prompts, history, tool inputs, file
+contents and tool results before forwarding model requests. Use
+`sealgate claude --model MODEL` to select a model, or
 `sealgate claude --print < prompt.txt` for piped input.
 
-This uses the saved claude.ai **subscription** login. SEALGATE sets only the base URL,
+This uses the saved claude.ai **subscription** login, read from the macOS Keychain
+item or the private `.credentials.json` file. SEALGATE sets only the base URL,
 preserves OAuth authorization and capability headers, and adds no replacement
 API credential. Login and refresh happen outside the sandbox; an expired login
 requires `claude auth login` and a relaunch. See Claude's
 [subscription gateway documentation](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways).
 
-Your current project is writable at `/workspace`; edits persist. The host key,
-detector environment and root `.env` are hidden from Claude. Other network access
-is blocked, so online tools, remote MCP, downloads and browser integration are
-unavailable. Images, opaque uploads and unsupported API fields are blocked.
-Tools use container programs, and the temporary Claude home is deleted on exit.
-There is no cross-launch history persistence yet.
+Your current project is writable and edits persist. The host key directory,
+detector environment and root `.env` are hidden from Claude. On macOS your real
+home directory, other users, `/Volumes` and the per-user temporary tree are
+unreadable except the project, the Claude binary and `sandboxReadPaths`; system
+directories and Homebrew stay readable. On Linux, tools use container programs
+and the project appears at `/workspace`. Other network access is blocked, so
+online tools, remote MCP, downloads and browser integration are unavailable.
+Images, opaque uploads and unsupported API fields are blocked. The temporary
+Claude home is deleted on exit; there is no cross-launch history persistence yet.
+
+### HTTP proxies
+
+The gateway's own connections to Anthropic, and to a remote detector, honor
+`HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` from your environment through an HTTP
+CONNECT tunnel. Only `http://host:port` proxies are supported; loopback targets
+and `NO_PROXY` matches (hostnames, `.suffix` or `*.suffix`, IP literals and CIDR
+ranges) connect directly. A malformed proxy value is an error, never a silent
+direct connection.
+
+`sealgate claude --proxy-egress` additionally lets Claude's tools reach that same
+proxy: the host forwards a loopback port (or the relay port 17841 on Linux) to
+the proxy, and the sandbox receives `HTTPS_PROXY`/`HTTP_PROXY` pointing at it with
+`NO_PROXY=127.0.0.1,localhost` so model requests still go through the gateway.
+**This tunnel is not inspected or encrypted**: a tool can send plaintext through
+it. It is off by default and prints a warning when enabled.
 
 Complete interception still depends on a probabilistic detector: missed secrets
 can pass through. Every request is inspected, which adds detector latency.
 Read the [gateway guide](docs/gateway.md) for supported fields, resource limits,
-signed-thinking replay, network enforcement and verification.
+signed-thinking replay, network enforcement per platform and verification.
 
 ## Prompt-only alternatives
 
@@ -358,6 +389,12 @@ sealgate sandbox-build
 npm run test:sandbox
 ```
 
+The Seatbelt suite runs on macOS only and needs no Docker:
+
+```sh
+npm run test:seatbelt
+```
+
 Tests use synthetic data and local mock HTTP providers. They cover exact matching,
 overlap, Unicode, multiline input, no matches, key permissions, encryption
 randomness, tampering, request construction, redirects, timeouts, invalid provider
@@ -366,8 +403,9 @@ validation requires the Claude Code CLI. No live provider is needed for tests.
 Chat tests also use a mock Claude process to check protected stdin, session
 continuity, credential isolation, streaming, cancellation, and failure handling.
 Gateway tests verify complete-request protection, OAuth forwarding, signed-block
-replay, streaming and blocked routes. The Docker suite tests actual network and
-Unix-socket confinement and runs native Claude against a mock upstream service.
+replay, streaming, blocked routes and proxied upstream connections. The Docker
+and Seatbelt suites test actual network, Unix-socket and IPC confinement and run
+native Claude against a mock upstream service.
 
 Source files live in `src/`, `bin/`, `scripts/`, and `test/`. Strict TypeScript
 checking covers all four directories. Run `npm run build` after editing source;

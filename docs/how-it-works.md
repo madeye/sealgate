@@ -211,8 +211,12 @@ Claude's own session persistence remains enabled for follow-up turns.
 | [`src/tui.ts`](../src/tui.ts) | Terminal editor, protected transcript display, keyboard controls |
 | [`src/request-protection.ts`](../src/request-protection.ts) | Complete JSON inspection, ciphertext cache, signed-block replay ledger |
 | [`src/gateway.ts`](../src/gateway.ts) | OAuth-pinned HTTP gateway, allowed routes, streamed responses |
-| [`src/sandbox.ts`](../src/sandbox.ts) | Native Claude launcher, private login snapshot, Docker confinement |
-| [`sandbox/`](../sandbox/) | Isolated relay, container build, seccomp policy |
+| [`src/launcher.ts`](../src/launcher.ts) | Shared launcher pieces: login from file or Keychain, native binary lookup, runtime snapshot |
+| [`src/sandbox.ts`](../src/sandbox.ts) | Platform dispatch and Linux Docker confinement |
+| [`src/seatbelt.ts`](../src/seatbelt.ts) | macOS sandbox profile parameters and `sandbox-exec` launch |
+| [`src/proxy.ts`](../src/proxy.ts) | Proxy selection from the environment, CONNECT tunnel, egress forwarder |
+| [`src/http.ts`](../src/http.ts) | Redirect-free HTTP client used by the gateway and detector |
+| [`sandbox/`](../sandbox/) | Linux relay, container build, seccomp policy; macOS Seatbelt profile |
 | [`src/types.ts`](../src/types.ts) | Shared types and the runtime object guard |
 | [`scripts/session-start.ts`](../scripts/session-start.ts) | Claude session reminder |
 | [`test/`](../test/) | Synthetic tests and mock provider fixtures |
