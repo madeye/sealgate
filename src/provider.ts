@@ -1,5 +1,6 @@
 import { endpointFor, validateConfig } from './config.js';
 import { fail, SealgateError } from './errors.js';
+import { request } from './http.js';
 import { isRecord } from './types.js';
 import type { Config, Environment } from './types.js';
 
@@ -20,8 +21,9 @@ export async function detectSensitive(prompt: string, config: Config, env: Envir
   const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   try {
-    const response = await fetch(endpointFor(config.baseUrl), {
-      method: 'POST', headers, redirect: 'error', signal: requestSignal,
+    // Proxy selection uses the process environment; `env` carries only the credential.
+    const response = await request(endpointFor(config.baseUrl), {
+      method: 'POST', headers, signal: requestSignal, env: process.env,
       body: JSON.stringify({
         model: config.model,
         messages: [
@@ -35,11 +37,13 @@ export async function detectSensitive(prompt: string, config: Config, env: Envir
         stream: false,
       }),
     });
-    if (!response.ok) fail('Trusted provider returned an HTTP error; no protected prompt was produced.');
-    if (!response.body) fail('Trusted provider returned an empty response; no protected prompt was produced.');
+    if (response.status < 200 || response.status >= 300) {
+      response.body.destroy();
+      fail('Trusted provider returned an HTTP error; no protected prompt was produced.');
+    }
     const chunks: Uint8Array[] = [];
     let size = 0;
-    for await (const chunk of response.body) {
+    for await (const chunk of response.body as AsyncIterable<Buffer>) {
       size += chunk.length;
       if (size > RESPONSE_LIMIT) fail('Trusted provider response exceeded the size limit; no protected prompt was produced.');
       chunks.push(chunk);

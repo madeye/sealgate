@@ -6,7 +6,11 @@ import { StringDecoder } from 'node:string_decoder';
 import { timingSafeEqual } from 'node:crypto';
 import { SealgateError, fail } from './errors.js';
 import { isRecord } from './types.js';
+import type { Environment } from './types.js';
 import { RequestProtector } from './request-protection.js';
+import { request } from './http.js';
+
+const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
 export interface GatewayOptions {
   protector: RequestProtector;
@@ -14,6 +18,10 @@ export interface GatewayOptions {
   socketPath?: string;
   /** Library/test injection only. CLI always uses api.anthropic.com. */
   upstream?: string;
+  /** Library/test injection only: extra trust anchor for the upstream TLS session. */
+  ca?: string;
+  /** Environment consulted for HTTP(S)_PROXY and NO_PROXY when reaching upstream. */
+  env?: Environment;
   timeoutMs?: number;
   onActivity?: (event: 'inspecting' | 'forwarding' | 'blocked') => void;
 }
@@ -106,6 +114,8 @@ export async function startGateway(options: GatewayOptions) {
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Never interpolate a request, header, provider body, or raw exception into errors.
+    // A TCP listener is reachable by every local process; a Unix socket has no remote address.
+    if (req.socket.remoteAddress && !LOOPBACK.includes(req.socket.remoteAddress)) { reject(res, 403, 'SEALGATE accepts loopback clients only.'); return; }
     if (req.method === 'HEAD' && req.url === '/api/hello') { res.writeHead(204); res.end(); return; }
     if (req.method !== 'POST' || !/^\/v1\/messages(?:\/count_tokens)?(?:\?beta=true)?$/.test(req.url ?? '')) {
       reject(res, 403, 'SEALGATE blocks this endpoint.'); return;
@@ -134,30 +144,33 @@ export async function startGateway(options: GatewayOptions) {
       const protectedRequest = await options.protector.protect(input, [version, beta], controller.signal);
       controller.signal.throwIfAborted();
       options.onActivity?.('forwarding');
-      const response = await fetch(new URL(req.url!, upstream), {
-        method: 'POST', redirect: 'error', signal: controller.signal,
+      const response = await request(new URL(req.url!, upstream), {
+        method: 'POST', signal: controller.signal, env: options.env, ca: options.ca,
         headers: { authorization: req.headers.authorization!, 'anthropic-version': version,
           'anthropic-beta': beta, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
           'x-app': 'cli', 'user-agent': 'sealgate/0.4.0' },
         body: protectedRequest.body,
       });
-      // Fetch decompresses the body. Do not forward stale length/encoding, hop-
-      // by-hop headers, cookies, redirects, or a server-provided alternate route.
+      // Redirects are never followed: a server-provided alternate route gets no request.
+      if (response.status >= 300 && response.status < 400) { response.body.destroy(); throw new Error('redirect'); }
+      // Upstream is asked for identity encoding. Do not forward stale length/encoding,
+      // hop-by-hop headers, or cookies.
       const headers: Record<string, string> = { 'cache-control': 'no-store' };
       for (const name of ['content-type', 'request-id', 'retry-after', 'anthropic-ratelimit-requests-remaining',
         'anthropic-ratelimit-tokens-remaining', 'anthropic-ratelimit-requests-reset', 'anthropic-ratelimit-tokens-reset']) {
-        const value = response.headers.get(name); if (value) headers[name] = value;
+        const value = response.headers[name]; if (typeof value === 'string' && value) headers[name] = value;
       }
+      const ok = response.status >= 200 && response.status < 300;
       res.writeHead(response.status, headers);
       const observer = new RemoteObserver(options.protector, headers['content-type']?.includes('text/event-stream') ?? false);
       let bytes = 0;
-      if (response.body) for await (const chunk of response.body) {
+      for await (const chunk of response.body as AsyncIterable<Buffer>) {
         bytes += chunk.length;
         if (bytes > 32 * 1024 * 1024) fail('Gateway response exceeds the limit.');
-        if (response.ok) observer.write(chunk);
+        if (ok) observer.write(chunk);
         if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
       }
-      if (response.ok) observer.end();
+      if (ok) observer.end();
       res.end();
     } catch (error) {
       options.onActivity?.('blocked');
