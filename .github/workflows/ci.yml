@@ -96,7 +96,7 @@ jobs:
           node .github/scripts/check-package.mjs "$RUNNER_TEMP/package-manifest.json"
       - name: Smoke test installed package without development dependencies
         run: |
-          npm install --global --prefix "$RUNNER_TEMP/sealgate-install" --ignore-scripts --no-audit --no-fund artifacts/*.tgz
+          npm install --global --prefix "$RUNNER_TEMP/sealgate-install" --ignore-scripts --no-audit --no-fund ./artifacts/*.tgz
           "$RUNNER_TEMP/sealgate-install/bin/sealgate" --help
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

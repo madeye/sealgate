@@ -54,4 +54,4 @@ jobs:
           DIST_TAG: ${{ steps.release.outputs.dist-tag }}
           # Optional bootstrap token for the first publish; subsequent publishes use OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish artifacts/*.tgz --access public --provenance --ignore-scripts --tag "$DIST_TAG"
+        run: npm publish ./artifacts/*.tgz --access public --provenance --ignore-scripts --tag "$DIST_TAG"
