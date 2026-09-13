@@ -61,7 +61,8 @@ for JSON object output:
 
 The provider API credential is sent as a Bearer header when configured. The local
 encryption key is never included. HTTPS is required for remote endpoints;
-loopback endpoints may use HTTP. Redirects are rejected. The configured timeout
+loopback endpoints and literal private LAN addresses (RFC 1918, IPv6 unique local)
+may use HTTP. Redirects are rejected. The configured timeout
 covers both waiting for headers and reading the response body.
 
 Default instructions cover credentials, personal identifiers, contact details,

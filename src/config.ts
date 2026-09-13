@@ -1,4 +1,5 @@
 import { constants } from 'node:fs';
+import { BlockList, isIP } from 'node:net';
 import type { Stats } from 'node:fs';
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -15,14 +16,30 @@ export function configDirectory(env: Environment = process.env): string {
   return dir;
 }
 
+/** Literal private-network addresses (RFC 1918 and IPv6 unique local) where a
+ * trusted provider may be reached over plain HTTP. Hostnames never qualify: a
+ * name can resolve anywhere, so only loopback names and literal addresses count. */
+const PRIVATE_NETWORKS = new BlockList();
+PRIVATE_NETWORKS.addSubnet('10.0.0.0', 8, 'ipv4');
+PRIVATE_NETWORKS.addSubnet('172.16.0.0', 12, 'ipv4');
+PRIVATE_NETWORKS.addSubnet('192.168.0.0', 16, 'ipv4');
+PRIVATE_NETWORKS.addSubnet('fc00::', 7, 'ipv6');
+
+/** Whether plain HTTP is acceptable for this URL host: loopback or a literal
+ * private LAN address. */
+export function allowsPlainHttp(hostname: string): boolean {
+  const host = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+  if (host === 'localhost' || host === '::1' || /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host)) return true;
+  const family = isIP(host);
+  return family === 4 ? PRIVATE_NETWORKS.check(host, 'ipv4') : family === 6 ? PRIVATE_NETWORKS.check(host, 'ipv6') : false;
+}
+
 export function endpointFor(baseUrl: string): URL {
   let url: URL;
   try { url = new URL(baseUrl); } catch { fail('Configure a valid provider baseUrl.'); }
-  const loopback = url.hostname === 'localhost' || url.hostname === '[::1]' ||
-    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(url.hostname);
-  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && allowsPlainHttp(url.hostname))) ||
       url.username || url.password || url.search || url.hash) {
-    fail('Provider URL must use HTTPS (HTTP is allowed only on loopback), without credentials, query, or fragment.');
+    fail('Provider URL must use HTTPS (HTTP is allowed only on loopback or private LAN addresses), without credentials, query, or fragment.');
   }
   url.pathname = url.pathname.replace(/\/+$/, '') + '/chat/completions';
   return url;
