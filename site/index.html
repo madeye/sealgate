@@ -111,7 +111,7 @@
           ><span>Prompts, context, history, and tool text</span>
         </p>
         <p>
-          <strong>Enforced network boundary</strong
+          <strong>Model request inspection</strong
           ><span>OS sandbox with a local gateway</span>
         </p>
       </div>
@@ -288,9 +288,9 @@ sealgate claude</code></pre>
             </div>
           </div>
           <figcaption>
-            Responses stream back unchanged through the same gateway. Only the
-            host gateway can reach the remote model; other network traffic from
-            Claude and its child tools is blocked.
+            Responses stream back unchanged through the same gateway. Linux tools
+            can reach the network directly outside SEALGATE; macOS blocks other
+            network traffic by default.
           </figcaption>
         </figure>
         <div class="explanation-grid">
@@ -325,12 +325,14 @@ sealgate claude</code></pre>
           </article>
           <article>
             <span class="mini-label">ENFORCE</span>
-            <h3>Block uninspected routes</h3>
+            <h3>Sandbox native Claude</h3>
             <p>
               On macOS a deny-by-default Seatbelt profile permits one outbound
-              route: the gateway’s loopback port. On Linux a relay connects a
-              networkless Docker namespace to the host gateway through a Unix
-              socket. DNS, other sockets and IPC escape routes are denied.
+              route by default: the gateway’s loopback port. On Linux a relay
+              connects Claude’s configured model endpoint to the host gateway
+              through a Unix socket. Tools have direct TCP and DNS access outside
+              SEALGATE. Kernel rules block direct connections to the original
+              provider’s resolved IP addresses, and host Unix sockets remain denied.
             </p>
             <p>
               Failed detection, unsupported requests, or encryption errors block
@@ -357,7 +359,7 @@ sealgate claude</code></pre>
             <h3>Native Claude</h3>
             <p>
               Use the native terminal with automatic request inspection and
-              network confinement.
+              OS sandboxing. Linux tool networking bypasses inspection.
             </p>
             <pre><code>sealgate claude
 sealgate claude --model sonnet
@@ -453,8 +455,8 @@ sealgate decrypt &lt; protected.txt</code></pre>
                 API fields.
               </li>
               <li>
-                Direct network calls, WebFetch, remote MCP, downloads, and
-                browser integration.
+                Direct network calls on macOS by default. Linux tools can use
+                the network directly; this traffic is not inspected or encrypted.
               </li>
               <li>
                 Unknown or changed signed-thinking blocks. Only exact blocks

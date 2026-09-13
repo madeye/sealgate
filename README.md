@@ -5,7 +5,8 @@
 Encrypt sensitive text before Claude Code sends it remotely. `sealgate claude` keeps
 Claude's native terminal interface and subscription login, with a local gateway
 that inspects complete model requests and an OS sandbox (the macOS sandbox, or
-Docker on Linux) that blocks other network traffic. Your configured **trusted detection provider**, such as local
+Docker on Linux). Linux tools have direct network access outside SEALGATE;
+macOS blocks other network traffic by default. Your configured **trusted detection provider**, such as local
 vLLM, identifies sensitive spans; Node encrypts them with a local AES-256-GCM key.
 
 For narrower workflows, `sealgate protect` prints a protected prompt for pasting and
@@ -191,7 +192,7 @@ sealgate claude
 
 Claude's native terminal interface and permission dialogs run inside an OS
 sandbox: the macOS sandbox (`sandbox-exec`, the same mechanism Claude Code's own
-Bash sandbox uses) or a Docker network sandbox on Linux. A local gateway
+Bash sandbox uses) or a Docker container on Linux. A local gateway
 protects detected text in system context, prompts, history, tool inputs, file
 contents and tool results before forwarding model requests. Use
 `sealgate claude --model MODEL` to select a model, or
@@ -209,9 +210,16 @@ detector environment and root `.env` are hidden from Claude. On macOS your real
 home directory, other users, `/Volumes` and the per-user temporary tree are
 unreadable except the project, the Claude binary and `sandboxReadPaths`; system
 directories and Homebrew stay readable. On Linux, tools use container programs
-and the project appears at `/workspace`. Other network access is blocked, so
-online tools, remote MCP, downloads and browser integration are unavailable.
-Images, opaque uploads and unsupported API fields are blocked. The temporary
+and the project appears at `/workspace`. Linux tools can access the network
+directly, including TCP and DNS, without `--proxy-egress`. This traffic is not
+inspected or encrypted by SEALGATE. Claude's model requests use the configured
+gateway. Linux blocks direct connections to the original Anthropic provider's
+resolved IPv4/IPv6 addresses, including through the built-in tool proxy, and
+stops the session if its network policy cannot be refreshed. Other destinations
+remain available; see [network limits](docs/gateway.md#linux). macOS blocks other
+network access by default. Rebuild the Linux image with `sealgate sandbox-build`
+after upgrading to install the provider firewall helper.
+The gateway blocks images, opaque uploads and unsupported API fields. The temporary
 Claude home is deleted on exit; there is no cross-launch history persistence yet.
 
 ### HTTP proxies
@@ -228,7 +236,9 @@ proxy: the host forwards a loopback port (or the relay port 17841 on Linux) to
 the proxy, and the sandbox receives `HTTPS_PROXY`/`HTTP_PROXY` pointing at it with
 `NO_PROXY=127.0.0.1,localhost` so model requests still go through the gateway.
 **This tunnel is not inspected or encrypted**: a tool can send plaintext through
-it. It is off by default and prints a warning when enabled.
+it. It is off by default and prints a warning when enabled. Linux tools already
+have direct network access; this flag lets proxy-aware tools use your host proxy.
+The Linux forwarder rejects destinations matching the original model provider.
 
 Complete interception still depends on a probabilistic detector: missed secrets
 can pass through. Every request is inspected, which adds detector latency.
@@ -366,7 +376,7 @@ old markers are treated as ordinary text and cannot be decrypted with this versi
 Keep an older checkout if you still hold `[[HECC:` ciphertext.
 
 `sealgate protect` and `sealgate chat` cover only submitted prompts. Use `sealgate claude` for
-complete model-request inspection and network confinement. Claude's
+model-request inspection and OS sandboxing. Claude's
 [hook decision-control documentation](https://code.claude.com/docs/en/hooks#decision-control)
 specifies that `UserPromptSubmit` cannot replace a submitted prompt, so the plugin
 uses only a `SessionStart` reminder. The new native launcher intercepts HTTP
@@ -414,7 +424,8 @@ Chat tests also use a mock Claude process to check protected stdin, session
 continuity, credential isolation, streaming, cancellation, and failure handling.
 Gateway tests verify complete-request protection, OAuth forwarding, signed-block
 replay, streaming, blocked routes and proxied upstream connections. The Docker
-and Seatbelt suites test actual network, Unix-socket and IPC confinement and run
+and Seatbelt suites test Linux tool networking, macOS network confinement,
+Unix-socket and IPC controls, and run
 native Claude against a mock upstream service.
 
 Source files live in `src/`, `bin/`, `scripts/`, and `test/`. Strict TypeScript

@@ -20,7 +20,9 @@ const HELP = `Usage:
 claude runs the native Claude interface inside an OS sandbox (macOS Seatbelt, or
 Docker on Linux after sandbox-build), protecting complete model requests with the
 local gateway. Uses your saved subscription login; sign in with claude auth login
-outside SEALGATE. Other network traffic and opaque uploads are blocked. The gateway
+outside SEALGATE. Linux blocks direct connections to the original provider while
+allowing other uninspected tool networking; macOS blocks
+other network traffic by default. The gateway blocks opaque uploads and
 honors HTTPS_PROXY/HTTP_PROXY/NO_PROXY. --proxy-egress additionally lets Claude's
 tools reach that proxy; such traffic is not inspected.
 

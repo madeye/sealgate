@@ -1,5 +1,6 @@
 import { BlockList, createConnection, createServer, isIP } from 'node:net';
 import type { Socket } from 'node:net';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { chmod } from 'node:fs/promises';
 import { fail } from './errors.js';
 import type { Environment } from './types.js';
@@ -130,9 +131,11 @@ export interface Forwarder {
   close(): Promise<void>;
 }
 
-/** A byte pipe from a local listener to the proxy. It parses nothing; the
- * sandboxed client speaks HTTP CONNECT to the real proxy through it. */
-export async function startProxyForwarder(proxy: URL, listen: { socketPath: string } | { loopback: true }): Promise<Forwarder> {
+/** Forward to the host proxy. With a destination policy, validate HTTP and
+ * CONNECT requests; otherwise preserve the macOS byte-pipe behavior. */
+export async function startProxyForwarder(proxy: URL, listen: { socketPath: string } | { loopback: true },
+  blocks?: (host: string) => Promise<boolean>): Promise<Forwarder> {
+  if (blocks) return startGuardedProxyForwarder(proxy, listen, blocks);
   const active = new Set<Socket>();
   const server = createServer(client => {
     const upstream = createConnection({ host: bare(proxy.hostname), port: proxyPort(proxy) });
@@ -157,6 +160,83 @@ export async function startProxyForwarder(proxy: URL, listen: { socketPath: stri
     async close(): Promise<void> {
       for (const socket of active) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+/** Linux's tool proxy checks each destination before using the host proxy.
+ * CONNECT payloads remain opaque; ordinary HTTP requests are checked individually. */
+async function startGuardedProxyForwarder(proxy: URL, listen: { socketPath: string } | { loopback: true },
+  blocks: (host: string) => Promise<boolean>): Promise<Forwarder> {
+  const active = new Set<Socket>();
+  const controller = new AbortController();
+  const server = createHttpServer({ maxHeaderSize: HEAD_LIMIT, headersTimeout: 10_000, requestTimeout: 300_000 }, (req, res) => {
+    void (async () => {
+      try {
+        const target = new URL(req.url ?? '');
+        if (target.protocol !== 'http:' || target.username || target.password || target.hash || await blocks(target.hostname)) {
+          res.writeHead(403, { connection: 'close' }); res.end(); return;
+        }
+        if (controller.signal.aborted || res.destroyed) return;
+        // Reconstruct the authority instead of trusting a conflicting Host header.
+        const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: target.host, connection: 'close' };
+        for (const name of ['proxy-authorization', 'proxy-connection', 'upgrade', 'transfer-encoding']) delete headers[name];
+        for (const name of String(req.headers.connection ?? '').split(',')) {
+          const key = name.trim().toLowerCase();
+          if (key !== 'host' && key !== 'connection') delete headers[key];
+        }
+        if (proxy.username) headers['proxy-authorization'] = `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`;
+        const upstream = httpRequest({ host: bare(proxy.hostname), port: proxyPort(proxy), method: req.method,
+          path: target.href, headers, signal: controller.signal, agent: false }, response => {
+          res.writeHead(response.statusCode ?? 502, { ...response.headers, connection: 'close' });
+          response.on('error', () => res.destroy()); response.pipe(res);
+        });
+        upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+        req.on('error', () => upstream.destroy());
+        res.on('close', () => upstream.destroy());
+        req.pipe(upstream);
+      } catch { if (!res.headersSent) res.writeHead(403, { connection: 'close' }); res.end(); }
+    })();
+  });
+  server.on('connection', socket => { active.add(socket); socket.on('close', () => active.delete(socket)); });
+  server.on('connect', (req, client, head) => {
+    void (async () => {
+      try {
+        if (!req.url || /[\s/@?#]/.test(req.url) || !/:\d+$/.test(req.url)) throw new Error();
+        const target = new URL(`http://${req.url}`);
+        if (await blocks(target.hostname)) throw new Error();
+        if (controller.signal.aborted || client.destroyed) return;
+        const upstream = await connectViaProxy(proxy, bare(target.hostname), Number(target.port) || 80,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]));
+        if (client.destroyed) { upstream.destroy(); return; }
+        active.add(upstream);
+        const drop = (): void => { client.destroy(); upstream.destroy(); active.delete(upstream); };
+        client.on('error', drop); upstream.on('error', drop);
+        client.on('close', drop); upstream.on('close', drop);
+        client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head.length) upstream.write(head);
+        client.pipe(upstream).pipe(client);
+      } catch { client.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); }
+    })();
+  });
+  server.on('upgrade', (_req, socket) => socket.destroy());
+  server.on('clientError', (_error, socket) => socket.destroy());
+  server.maxConnections = 64;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    const ready = (): void => { server.off('error', reject); resolve(); };
+    if ('socketPath' in listen) server.listen(listen.socketPath, ready);
+    else server.listen(0, '127.0.0.1', ready);
+  });
+  if ('socketPath' in listen) await chmod(listen.socketPath, 0o600);
+  const address = server.address();
+  return {
+    port: address && typeof address === 'object' ? address.port : undefined,
+    socketPath: 'socketPath' in listen ? listen.socketPath : undefined,
+    async close(): Promise<void> {
+      controller.abort();
+      for (const socket of active) socket.destroy();
+      await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
     },
   };
 }

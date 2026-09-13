@@ -7,6 +7,7 @@ import path from 'node:path';
 import { SealgateError } from '../src/errors.js';
 import { proxyFor, parseProxyUrl, connectViaProxy, startProxyForwarder } from '../src/proxy.js';
 import { request } from '../src/http.js';
+import { ProviderNetworkPolicy } from '../src/provider-network.js';
 import { provider, mockProxy, fixtures } from './helpers.js';
 import type { TestContext } from 'node:test';
 
@@ -95,4 +96,47 @@ test('the forwarder pipes bytes to the proxy and stops when closed', async t => 
     const attempt = connect({ host: '127.0.0.1', port: forwarder.port! }, () => resolve(undefined));
     attempt.on('error', reject);
   }));
+});
+
+test('guarded tool proxy blocks provider CONNECT destinations before the host proxy sees them', async t => {
+  const target = new URL(await provider(t, (_req, res) => res.end('tool response')));
+  const proxy = await mockProxy(t, (_host, port) => ({ host: '127.0.0.1', port }));
+  const policy = new ProviderNetworkPolicy(async () => ['192.0.2.10', '2001:db8::10']);
+  await policy.refresh();
+  const forwarder = await startProxyForwarder(new URL(proxy.url), { loopback: true }, host => policy.blocks(host));
+  t.after(() => forwarder.close());
+  const url = new URL(`http://127.0.0.1:${forwarder.port}`);
+  for (const host of ['api.anthropic.com', 'API.ANTHROPIC.COM.', '192.0.2.10', '2001:db8::10', '::ffff:192.0.2.10']) {
+    await assert.rejects(connectViaProxy(url, host, 443), /refused/);
+  }
+  assert.deepEqual(proxy.log, []);
+  const socket = await connectViaProxy(url, '127.0.0.1', Number(target.port));
+  socket.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
+  let body = ''; for await (const chunk of socket) body += chunk;
+  assert.match(body, /tool response$/);
+  assert.deepEqual(proxy.log, [`127.0.0.1:${target.port}`]);
+});
+
+test('guarded tool proxy checks HTTP destinations and reconstructs conflicting Host headers', async t => {
+  const received: Array<{ url: string | undefined; host: string | undefined }> = [];
+  const proxy = new URL(await provider(t, (req, res) => {
+    received.push({ url: req.url, host: req.headers.host }); res.end('tool HTTP');
+  }));
+  const policy = new ProviderNetworkPolicy(async () => ['192.0.2.10']);
+  await policy.refresh();
+  const forwarder = await startProxyForwarder(proxy, { loopback: true }, host => policy.blocks(host));
+  t.after(() => forwarder.close());
+  const send = (target: string, host: string) => new Promise<string>((resolve, reject) => {
+    const socket = connect(forwarder.port!, '127.0.0.1'); let response = '';
+    socket.setTimeout(5000, () => socket.destroy(Error('proxy timeout')));
+    socket.on('connect', () => socket.write(`GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`));
+    socket.on('data', chunk => response += chunk); socket.on('end', () => resolve(response)); socket.on('error', reject);
+  });
+  for (const target of ['http://api.anthropic.com/v1/messages', 'http://192.0.2.10/v1/messages',
+    'http://0xc000020a/v1/messages', 'http://[::ffff:192.0.2.10]/v1/messages', '/v1/messages']) {
+    assert.match(await send(target, '127.0.0.1'), /^HTTP\/1\.1 403/);
+  }
+  assert.deepEqual(received, []);
+  assert.match(await send('http://127.0.0.1:4321/tool', 'api.anthropic.com'), /tool HTTP$/);
+  assert.deepEqual(received, [{ url: 'http://127.0.0.1:4321/tool', host: '127.0.0.1:4321' }]);
 });

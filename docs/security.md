@@ -1,7 +1,8 @@
 # Security model
 
 `sealgate claude` protects detected spans in complete outbound model requests and
-blocks other network traffic. The older `sealgate protect` and `sealgate chat` commands
+allows direct, uninspected tool networking on Linux. macOS blocks other network
+traffic by default. The older `sealgate protect` and `sealgate chat` commands
 cover submitted prompts only. Its encryption
 and detection steps have different guarantees. This page describes what each
 participant receives and the limits to consider when using the output.
@@ -17,7 +18,8 @@ participant receives and the limits to consider when using the output.
 The table describes the prompt-only workflows. In `sealgate claude`, **local Claude
 sees original text**; the gateway protects it before it reaches remote Anthropic.
 The sandbox launcher hides the host key directory, provider environment and root
-`.env`, and permits network access only through the inspecting gateway. Anthropic
+`.env`, and configures Claude to send model requests through the inspecting gateway.
+Linux tools can access the network directly without inspection. Anthropic
 receives its own subscription OAuth credential as required for authentication;
 that credential is not sent to the detector. See [gateway boundaries](gateway.md).
 
@@ -98,20 +100,28 @@ the exit code when scripting, and copy only a successful protected result.
 In `sealgate protect` and `sealgate chat`, direct Claude input, source files, tool results,
 and other context remain outside protection. The `sealgate claude` gateway instead
 inspects all supported outgoing model-request text, including file/tool context
-and history. Opaque uploads and unknown protocols are blocked. Other network
-traffic cannot bypass the gateway because the native CLI and its descendants run
-in a networkless Docker namespace with host Unix sockets denied by seccomp
-(Linux), or under a deny-by-default Seatbelt profile whose only network route is
-the gateway port (macOS). The optional `--proxy-egress` tunnel is the one
-deliberate, uninspected exception and is off by default.
+and history. The gateway blocks opaque uploads and unknown protocols. On Linux,
+the native CLI and its descendants use Docker bridge networking with host Unix
+sockets denied by seccomp. Tools can send plaintext directly to network services;
+this traffic is outside SEALGATE. The launcher blocks the original provider's
+resolved IPv4/IPv6 destinations in the kernel before starting Claude, pins its
+hostname to blocked addresses, and refreshes the firewall every 30 seconds.
+DNS or firewall refresh failure stops the client. Neither Claude nor its tools
+can change the firewall. The Linux tool proxy also rejects provider destinations.
+This destination block does not cover arbitrary third-party relays, alternate
+provider endpoints, or independently resolved addresses not yet observed by the
+host. See [the gateway guide](gateway.md#linux) for the precise scope. On macOS, a
+deny-by-default Seatbelt profile permits only the gateway port, with an optional
+uninspected `--proxy-egress` tunnel that is off by default. That tunnel is also
+available on Linux, where direct tool networking is already enabled.
 
-This protects remote egress, not local plaintext at rest. Native Claude can keep
+This protects model requests sent through the gateway, not local plaintext at rest. Native Claude can keep
 original content in the temporary home until it is removed on exit. The project
 is writable, so tool changes to files persist. Host programs that later execute
 those files are outside confinement. The host kernel, Docker daemon or macOS
 sandbox, SEALGATE process, terminal and trusted detector remain trusted. The
-macOS sandbox shares the host kernel and IPC namespace and is the weaker of the
-two boundaries. Encoded secrets and adversarial
+macOS sandbox shares the host kernel and IPC namespace; Linux provides separate
+container namespaces but allows direct network access. Encoded secrets and adversarial
 inputs can evade model detection; interception is not a guarantee of detection.
 Read [the full gateway guide](gateway.md) for supported features and limits.
 

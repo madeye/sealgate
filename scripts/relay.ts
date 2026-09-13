@@ -1,6 +1,7 @@
 // No HTTP parsing or general proxying here. This isolated sidecar has one Unix
-// socket directory mount and no external network. The host gateway validates all
-// model requests; the optional proxy socket exists only when the host enabled it.
+// socket directory mount and shares bridge networking with the client. These
+// listeners stay on loopback; the host gateway validates model requests sent to
+// it. The optional proxy socket exists only when the host enabled it.
 import { createServer, createConnection } from 'node:net';
 function relay(port: number, socketPath: string): void {
   const server = createServer(client => {

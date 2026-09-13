@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, lstat, rm, copyFile, realpath } from 'node:fs/promises';
+import { mkdtemp, lstat, rm, copyFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ import type { Forwarder } from './proxy.js';
 import { CLAUDE_ARGS, RELAY_GATEWAY_PORT, RELAY_PROXY_PORT, claudeEnvironment, findNativeClaude, foreground,
   isElf, isMachO, loadSubscription, prepareRuntime, sandboxDirectory } from './launcher.js';
 import { checkSeatbelt, runSeatbelt } from './seatbelt.js';
+import { ProviderNetworkPolicy } from './provider-network.js';
 
 export { loadSubscription, sandboxDirectory } from './launcher.js';
 export type { Subscription } from './launcher.js';
@@ -44,6 +45,7 @@ export async function buildSandbox(): Promise<void> {
   try {
     await copyFile(path.join(sandboxDirectory, 'Dockerfile'), path.join(context, 'Dockerfile'));
     await copyFile(fileURLToPath(new URL('../scripts/relay.js', import.meta.url)), path.join(context, 'relay.mjs'));
+    await copyFile(fileURLToPath(new URL('../scripts/firewall.js', import.meta.url)), path.join(context, 'firewall.mjs'));
     if (await foreground('docker', ['build', '--tag', SANDBOX_IMAGE, context]) !== 0) fail('Sandbox image build failed.');
   } finally { await rm(context, { recursive: true, force: true }); }
 }
@@ -61,11 +63,16 @@ export interface SandboxOptions {
   print?: boolean;
   /** Expose the relay's proxy port; the host forwards sockets/proxy.sock to the configured proxy. */
   proxyEgress?: boolean;
+  /** Shared with the guarded tool proxy; tests may inject a deterministic resolver. */
+  providerPolicy?: ProviderNetworkPolicy;
+  /** Test-only timing injection; CLI always refreshes every 30 seconds. */
+  providerRefreshMs?: number;
   /** Controlled test injection; never exposed as arbitrary CLI arguments. */
   command?: string[];
 }
 
-/** Runs the native client and all descendant tools in a networkless namespace.
+/** Runs the native client and descendant tools with direct bridge networking.
+ * Direct provider destinations are blocked; model requests use the loopback gateway.
  * A separate relay alone can open the host gateway socket. Seccomp denies Unix
  * sockets in the client, including sockets hidden in a writable workspace. */
 export async function runSandbox(options: SandboxOptions): Promise<number> {
@@ -77,11 +84,33 @@ export async function runSandbox(options: SandboxOptions): Promise<number> {
   // Runtime socket directory and credentials are separate mounts. The relay
   // sees neither the workspace nor the client's subscription credential.
   const sockets = path.join(options.runtime, 'sockets');
+  const policy = options.providerPolicy ?? new ProviderNetworkPolicy();
+  const hosts = path.join(options.runtime, 'hosts');
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let refreshing: Promise<void> | undefined;
+  let refreshFailed = false;
+  let hostsPinned = false;
+  const applyPolicy = async (): Promise<void> => {
+    await policy.refresh();
+    const helper = `sealgate-firewall-${randomUUID()}`;
+    try {
+      await docker(['run', '--rm', '--name', helper, '--pull=never', '--read-only',
+        '--cap-drop=ALL', '--cap-add=NET_ADMIN', '--security-opt=no-new-privileges',
+        '--pids-limit=32', '--user=0:0', '--log-driver=none', '--network', `container:${relay}`,
+        SANDBOX_IMAGE, 'node', '/opt/sealgate/firewall.mjs', ...policy.addresses]);
+    } finally { await docker(['rm', '-f', helper]).catch(() => {}); }
+    // Pin normal name lookups to addresses already covered by the firewall.
+    if (!hostsPinned) {
+      await writeFile(hosts, policy.hosts(), { mode: 0o600 });
+      hostsPinned = true;
+    }
+  };
   await copyFile(path.join(sandboxDirectory, 'seccomp.json'), path.join(options.runtime, 'seccomp.json'));
   try {
-    await docker(['run', '-d', '--name', relay, ...base, '--network=none',
+    await docker(['run', '-d', '--name', relay, ...base, '--network=bridge',
       ...mount(sockets, '/run/sealgate', true), SANDBOX_IMAGE]);
-    // Probe the listening socket inside the isolated network, without contacting
+    await applyPolicy();
+    // Probe the listening socket inside the shared network, without contacting
     // the gateway or passing any user text. Retries are bounded by the CLI call.
     await docker(['exec', relay, 'node', '-e',
       `const net=require('node:net');let n=0;function probe(){const s=net.connect(${RELAY_GATEWAY_PORT},'127.0.0.1',()=>{s.destroy();process.exit(0)});s.on('error',()=>{if(++n>50)process.exit(1);setTimeout(probe,100)})}probe()`]);
@@ -90,6 +119,7 @@ export async function runSandbox(options: SandboxOptions): Promise<number> {
     const args = ['run', '--name', client, ...base, '--network', `container:${relay}`,
       '--security-opt', `seccomp=${path.join(options.runtime, 'seccomp.json')}`,
       '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m',
+      ...mount(hosts, '/etc/hosts', true),
       ...mount(options.workspace, '/workspace'), ...mount(home, '/home/sealgate'),
       ...mount(options.binary, '/usr/local/bin/claude', true),
       '--workdir=/workspace', ...Object.entries(environment).map(([name, value]) => `--env=${name}=${value}`)];
@@ -103,8 +133,19 @@ export async function runSandbox(options: SandboxOptions): Promise<number> {
       if (options.model) args.push('--model', options.model);
       if (options.print) args.push('--print');
     }
-    return await foreground('docker', args);
+    refreshTimer = setInterval(() => {
+      if (refreshing) return;
+      refreshing = applyPolicy().catch(async () => {
+        refreshFailed = true;
+        await docker(['rm', '-f', client]).catch(() => {});
+      }).finally(() => { refreshing = undefined; });
+    }, options.providerRefreshMs ?? 30_000);
+    const status = await foreground('docker', args);
+    if (refreshFailed) fail('Model provider network block refresh failed; the Linux session was stopped.');
+    return status;
   } finally {
+    clearInterval(refreshTimer);
+    await refreshing;
     // Also kill detached descendants after terminal cancellation/client crashes.
     await docker(['rm', '-f', client]).catch(() => {});
     await docker(['rm', '-f', relay]).catch(() => {});
@@ -131,13 +172,16 @@ export async function launchClaude(settings: ProviderSettings, key: Buffer, conf
   if (!options.print && (!process.stdin.isTTY || !process.stdout.isTTY)) fail('Use sealgate claude --print for piped input.');
   const proxy = options.proxyEgress ? proxyFromEnvironment(process.env) : undefined;
   if (options.proxyEgress && !proxy) fail('--proxy-egress requires HTTPS_PROXY or HTTP_PROXY set to an http://host:port proxy.');
+  const providerPolicy = darwin ? undefined : new ProviderNetworkPolicy();
   const runtime = await prepareRuntime(subscription, workspace);
   let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
   let forwarder: Forwarder | undefined;
   try {
     const protector = new RequestProtector(key, (text, signal) => detectSensitive(text, settings.config, settings.env, signal));
     const notice = (): void => {
-      process.stderr.write('sealgate: Native Claude is isolated. Model requests are inspected; other network access is blocked.\n');
+      process.stderr.write(darwin
+        ? 'sealgate: Native Claude is isolated. Model requests are inspected; other network access is blocked.\n'
+        : 'sealgate: Model requests use the inspecting gateway. Direct provider connections are blocked; other tool networking is uninspected.\n');
       if (proxy) process.stderr.write('sealgate: --proxy-egress lets tools reach your HTTP proxy. That traffic is not inspected or encrypted.\n');
     };
     if (darwin) {
@@ -149,9 +193,9 @@ export async function launchClaude(settings: ProviderSettings, key: Buffer, conf
         gatewayPort: gateway.address.port, proxyPort: forwarder?.port, model: options.model, print: options.print });
     }
     gateway = await startGateway({ protector, authorization: subscription.authorization, socketPath: path.join(runtime.sockets, 'gateway.sock'), env: process.env });
-    if (proxy) forwarder = await startProxyForwarder(proxy, { socketPath: path.join(runtime.sockets, 'proxy.sock') });
+    if (proxy) forwarder = await startProxyForwarder(proxy, { socketPath: path.join(runtime.sockets, 'proxy.sock') }, host => providerPolicy!.blocks(host));
     notice();
-    return await runSandbox({ workspace, runtime: runtime.dir, binary, proxyEgress: Boolean(proxy), model: options.model, print: options.print });
+    return await runSandbox({ workspace, runtime: runtime.dir, binary, providerPolicy, proxyEgress: Boolean(proxy), model: options.model, print: options.print });
   } finally {
     await forwarder?.close();
     await gateway?.close();

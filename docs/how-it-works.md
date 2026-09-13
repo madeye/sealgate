@@ -20,7 +20,7 @@ dependencies.
 | `sealgate decrypt` | Protected UTF-8 text on stdin | None | Restores recognized ciphertext markers locally |
 | `sealgate chat` | Prompts in a terminal editor | Detector, then Claude Code | Streams replies in a protected conversation |
 | `sealgate sandbox-build` | No prompt | Downloads the container runtime | Builds the local sandbox image |
-| `sealgate claude` | Native terminal UI or stdin with `--print` | Inspected model requests; other network traffic blocked | Native Claude with subscription OAuth and local tools |
+| `sealgate claude` | Native terminal UI or stdin with `--print` | Inspected model requests; direct tool networking on Linux, other traffic blocked by default on macOS | Native Claude with subscription OAuth and local tools |
 
 Protection and decryption accept multiline terminal input ending at EOF, or a file
 redirected to stdin. They reject prompt text in command-line arguments. A complete

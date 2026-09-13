@@ -147,7 +147,7 @@ programs such as `ps` and `sudo` cannot start under any Seatbelt profile. Host
 paths reach the profile only as `sandbox-exec -D` parameters, never by string
 interpolation. See [sandbox/macos.md](../sandbox/macos.md) for the rationale.
 
-This is a weaker boundary than Docker: the sandbox shares the host kernel and
+This provides less process and IPC isolation than Docker: the sandbox shares the host kernel and
 Mach IPC namespace, so a kernel or sandbox bug is a full escape, and Apple has
 deprecated `sandbox-exec` while continuing to ship it. If it is missing, the
 launcher exits rather than running Claude unconfined. Claude Code's built-in
@@ -158,20 +158,36 @@ processes also covers your other terminals.
 
 ### Linux
 
-The relay starts with Docker's `none` network. Claude joins that network namespace
+The relay starts with Docker's `bridge` network. Claude joins that network namespace
 but has separate filesystem/process isolation and a stricter seccomp profile.
-Only the relay can open the host gateway socket; it has no external network
-itself. Claude and its child processes cannot create Unix sockets, including
-sockets a project exposes to host services. Direct Internet, host-loopback, DNS,
-Docker-daemon, telemetry, updates, remote MCP, browser integration, WebFetch and
-remote-control traffic do not get a bypass. They fail or remain unavailable.
-Only model requests accepted and transformed by the gateway are forwarded.
+Only the relay can open the host gateway socket. Claude and its child processes
+cannot create Unix sockets, including sockets a project exposes to host services.
+Tools have direct outbound TCP and DNS access by default, so downloads and other
+network calls bypass SEALGATE's inspection and encryption. `--proxy-egress` is
+optional. Host loopback remains separate; host services reachable through the
+bridge can be contacted. Relay ports bind only to the container's loopback and
+are not published on the host.
 
-This is intentionally a restricted network environment, not a transparent proxy
-for arbitrary HTTPS services. A future endpoint must receive an explicit policy
-before it can be used. There is no generic forward proxy, redirect following, or
-fallback that sends original text. If isolation cannot start, the launcher exits
-rather than running Claude on the host.
+`ANTHROPIC_BASE_URL` directs Claude's model requests to the inspecting gateway.
+Before Claude starts, a temporary helper installs nftables rules that reject
+traffic to the original provider, `api.anthropic.com`, at all resolved IPv4 and
+IPv6 addresses on every port and protocol. Only this helper receives `NET_ADMIN`;
+the client and relay cannot change the rules. The rules apply inside their shared
+network namespace, so the host gateway can still reach Anthropic after inspection.
+The client receives a read-only hosts file pinned to the blocked addresses.
+Every 30 seconds, the host resolves the provider again and atomically refreshes
+the firewall, retaining previous addresses. DNS or firewall refresh failures
+stop the client. Rebuild the image with `sealgate sandbox-build` after upgrading.
+
+This is a destination block for the supported Anthropic upstream. Other tool
+destinations remain available and uninspected. Arbitrary third-party relays,
+alternate provider endpoints, and addresses obtained from a different resolver
+before the next refresh are outside this block; it is not a universal boundary
+against covert model traffic over otherwise allowed tool connections.
+The gateway still rejects unsupported requests and never falls back to forwarding
+original text after a protection failure. Telemetry, auto-updates and cloud MCP
+remain disabled by the launcher configuration. If isolation cannot start, the
+launcher exits rather than running Claude on the host.
 
 ### HTTP proxies
 
@@ -180,13 +196,18 @@ plain-HTTP loopback test upstream) from the host environment using an HTTP
 CONNECT tunnel that SEALGATE implements itself; Node's `fetch` is not used. The
 proxy must be `http://host:port`, optionally with credentials; `NO_PROXY`
 entries and loopback targets connect directly. The same rule applies to a
-remote detector. With `--proxy-egress`, the host also runs a byte-level
+remote detector. With `--proxy-egress`, the host also runs a
 forwarder from a loopback port (macOS) or the relay's port 17841 (Linux) to that
 proxy, and the sandbox environment points `HTTPS_PROXY`/`HTTP_PROXY` at it while
-`NO_PROXY` keeps model requests on the gateway. The forwarder parses nothing, so
-anything a tool sends through it leaves the machine uninspected; proxy
-credentials in the environment URL are passed to the sandbox unchanged.
-Docker's [none network](https://docs.docker.com/engine/network/drivers/none/) and
+`NO_PROXY` keeps model requests on the gateway. On Linux, the forwarder checks
+every HTTP request and CONNECT destination, rejecting the original provider's
+hostname, known IP addresses, and DNS aliases that resolve to those IPs. Invalid
+or unresolved destinations are denied. The host proxy receives reconstructed
+authorities so a conflicting Host header cannot bypass the check. Allowed
+traffic is not inspected or encrypted by SEALGATE. macOS retains its byte-level
+forwarder. Proxy credentials stay in the host forwarder on Linux.
+On Linux, direct tool networking remains available with or without this flag.
+Docker's [bridge network](https://docs.docker.com/engine/network/drivers/bridge/) and
 [seccomp documentation](https://docs.docker.com/engine/security/seccomp/) describe
 the underlying controls. The included policy and attribution are in
 [sandbox/](../sandbox/README.md).
@@ -220,8 +241,13 @@ sealgate sandbox-build && npm run test:sandbox   # Linux
 ```
 
 The normal suite uses mock vLLM and Anthropic services and needs no subscription.
-The platform suites test direct TCP/DNS, loopback, Unix-socket and (on macOS)
-Keychain, `open`, Apple Events, `launchctl` and clipboard escape attempts, check
+The Linux suite verifies direct tool TCP/DNS access with and without the proxy,
+provider TCP/UDP and IPv4/IPv6 denial, read-only DNS pinning, firewall tamper
+denial, address refresh, session termination on DNS failure, gateway protection,
+and Unix-socket denial using local fixtures. Native Claude runs both Read and a
+networked Bash tool; their results are protected on the next model request. The macOS suite
+tests network, Keychain, `open`, Apple Events, `launchctl` and clipboard escape
+attempts. The platform suites check
 hidden credentials, opt-in read paths, the proxy forwarder and persistent file
 edits, and run the installed native Claude binary against a mock Anthropic SSE
 service. They check prompt, CLAUDE.md and Read-tool-result protection. Set

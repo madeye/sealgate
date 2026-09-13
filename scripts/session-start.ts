@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Deliberately reads neither the hook payload, local configuration, nor the key.
-const reminder = 'SEALGATE: For complete model-request inspection, launch sealgate claude from a separate local terminal (on Linux, after sealgate sandbox-build). Its gateway protects detected text in prompts, context, history, and tool results; the OS sandbox blocks other network traffic. This plugin alone cannot intercept or modify requests. The narrower sealgate chat wrapper protects typed prompts only. For manual preprocessing, run sealgate protect, finish input with EOF (Ctrl-D), and paste only successful stdout. The trusted detection provider receives original text and detection can miss secrets.';
+const reminder = 'SEALGATE: For complete model-request inspection, launch sealgate claude from a separate local terminal (on Linux, after sealgate sandbox-build). Its gateway protects detected text in prompts, context, history, and tool results; Linux tools have direct, uninspected network access, while macOS blocks other network traffic by default. This plugin alone cannot intercept or modify requests. The narrower sealgate chat wrapper protects typed prompts only. For manual preprocessing, run sealgate protect, finish input with EOF (Ctrl-D), and paste only successful stdout. The trusted detection provider receives original text and detection can miss secrets.';
 process.stdout.write(JSON.stringify({
   systemMessage: reminder,
   hookSpecificOutput: {

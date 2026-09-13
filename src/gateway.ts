@@ -9,6 +9,7 @@ import { isRecord } from './types.js';
 import type { Environment } from './types.js';
 import { RequestProtector } from './request-protection.js';
 import { request } from './http.js';
+import { MODEL_PROVIDER_UPSTREAM } from './provider-network.js';
 
 const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
@@ -97,7 +98,7 @@ class RemoteObserver {
 }
 
 export async function startGateway(options: GatewayOptions) {
-  const upstream = new URL(options.upstream ?? 'https://api.anthropic.com');
+  const upstream = new URL(options.upstream ?? MODEL_PROVIDER_UPSTREAM);
   if ((upstream.protocol !== 'https:' && !(upstream.protocol === 'http:' && upstream.hostname === '127.0.0.1')) ||
       upstream.username || upstream.password || upstream.pathname !== '/' || upstream.search || upstream.hash) {
     fail('Invalid gateway upstream.');
