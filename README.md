@@ -436,6 +436,35 @@ Relative imports use `.js` extensions to match the compiled Node.js modules.
 only the compiled runtime, plugin files, and documentation, excluding tests,
 development sources, `.env`, and local keys.
 
+### Continuous integration and releases
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`. It tests
+Node 22 and 24 on Ubuntu and macOS, validates the Claude plugin, runs both native
+sandbox suites against mock providers, and smoke-tests an installed npm tarball.
+The sandbox jobs install Claude Code 2.1.270; update that pin deliberately when
+testing compatibility with a newer native client. The `npm-package` workflow
+artifact contains the checked tarball. No provider credentials or subscription
+are needed for CI.
+
+Publishing a GitHub release runs `.github/workflows/publish.yml`, which reruns
+CI for the release commit and publishes the exact tarball CI checked. The release
+tag must match `v` plus the version in `package.json` (for example, `v0.4.0`).
+Stable releases use npm's `latest` tag; a prerelease version such as
+`0.5.0-beta.1` must also be marked as a GitHub prerelease and uses npm's `next` tag.
+Draft releases and ordinary branch pushes do not publish packages.
+
+For the first npm publication, add a granular npm token with permission to
+publish `sealgate` and bypass 2FA as the repository Actions secret `NPM_TOKEN`.
+After the package exists, configure its npm
+[trusted publisher](https://docs.npmjs.com/trusted-publishers/) with GitHub owner
+`madeye`, repository `sealgate`, and workflow filename `publish.yml` (no environment
+name). Allow direct publishing, then remove `NPM_TOKEN`; subsequent releases use
+GitHub OIDC and publish provenance without a stored token.
+
+To prepare a release, update the package and lockfile versions together, commit
+the change, and publish a GitHub release for the matching version tag. The workflow
+will fail rather than publish if the tag, version, or prerelease status disagree.
+
 ## Website
 
 The [GitHub Pages site](https://madeye.github.io/sealgate/) is a static usage and

@@ -35,7 +35,10 @@
     "type": "git",
     "url": "git+https://github.com/madeye/sealgate.git"
   },
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "devDependencies": {
     "@types/node": "22.20.2",
     "typescript": "7.0.2"
