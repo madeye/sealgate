@@ -41,7 +41,18 @@ Docker daemon. Manual preprocessing and the older chat wrapper also work on WSL.
 The project is written in
 TypeScript and compiles to Node.js ES modules in `dist/`. TypeScript and Node type
 definitions are development dependencies; the installed CLI has no runtime npm
-dependencies. From this checkout:
+dependencies.
+
+The CLI is published on npm as [`@m0d8ye/sealgate`](https://www.npmjs.com/package/@m0d8ye/sealgate);
+the installed command is `sealgate`. The unscoped name is unavailable because npm
+treats it as a duplicate of an unrelated package.
+
+```sh
+npm install --global @m0d8ye/sealgate
+sealgate --help
+```
+
+Alternatively, from a checkout:
 
 ```sh
 git clone https://github.com/madeye/sealgate.git
@@ -55,7 +66,9 @@ claude --plugin-dir /absolute/path/to/sealgate
 `npm ci` installs the locked development dependencies and builds the project.
 You can also use `node /absolute/path/to/sealgate/dist/bin/sealgate.js` after building,
 without installing the CLI. The plugin is loaded for Claude sessions launched
-with `--plugin-dir`; its hook also runs compiled code from `dist/`.
+with `--plugin-dir`; its hook also runs compiled code from `dist/`. The published
+package contains the same plugin files, so `--plugin-dir` can also point at the
+installed package directory, `$(npm root --global)/@m0d8ye/sealgate`.
 Installing the npm CLI alone does not enable the Claude plugin. See Claude's
 [plugin reference](https://code.claude.com/docs/en/plugins-reference) for loading
 and distributing plugins.
@@ -452,11 +465,20 @@ artifact contains the checked tarball. No provider credentials or subscription
 are needed for CI.
 
 Publishing a GitHub release runs `.github/workflows/publish.yml`, which reruns
-CI for the release commit and publishes the exact tarball CI checked. The release
-tag must match `v` plus the version in `package.json` (for example, `v0.4.0`).
-Stable releases use npm's `latest` tag; a prerelease version such as
-`0.5.0-beta.1` must also be marked as a GitHub prerelease and uses npm's `next` tag.
-Draft releases and ordinary branch pushes do not publish packages.
+CI for the release commit and publishes the exact tarball CI checked to npm as
+`@m0d8ye/sealgate`. The release tag must match `v` plus the version in
+`package.json` (for example, `v0.4.0`). Stable releases use npm's `latest` tag; a
+prerelease version such as `0.5.0-beta.1` must also be marked as a GitHub
+prerelease and uses npm's `next` tag. Draft releases and ordinary branch pushes
+do not publish packages.
+
+The workflow authenticates with npm through GitHub OIDC
+[trusted publishing](https://docs.npmjs.com/trusted-publishers) and attaches a
+provenance attestation, so no long-lived npm token is stored in the repository.
+The package settings on npmjs.com list `madeye/sealgate` with workflow filename
+`publish.yml` as the trusted publisher, and token-based publishing is disallowed.
+The optional `NPM_TOKEN` secret exists only to bootstrap a package that does not
+yet exist on npm and should be deleted once trusted publishing is configured.
 
 For the first npm publication, add a granular npm token with permission to
 publish `sealgate` and bypass 2FA as the repository Actions secret `NPM_TOKEN`.

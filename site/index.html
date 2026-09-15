@@ -133,18 +133,17 @@
             <div>
               <h3>Install the CLI</h3>
               <p>
-                Clone the repository, build the TypeScript source, and install
-                <code>sealgate</code> on your PATH.
+                Install the published package from npm. The package is scoped as
+                <code>@m0d8ye/sealgate</code>; the command it installs is
+                <code>sealgate</code>.
               </p>
-              <pre><code>git clone https://github.com/madeye/sealgate.git
-cd sealgate
-npm ci
-npm install --global .</code></pre>
+              <pre><code>npm install --global @m0d8ye/sealgate
+sealgate --help</code></pre>
               <p class="small">
-                Prefer an installation without a global npm prefix? After
-                building, use
-                <code>node /absolute/path/to/sealgate/dist/bin/sealgate.js</code> in
-                place of <code>sealgate</code>.
+                Prefer building from source? Clone the repository, then run
+                <code>npm ci</code> and <code>npm install --global .</code>, or
+                use <code>node /absolute/path/to/sealgate/dist/bin/sealgate.js</code>
+                in place of <code>sealgate</code>.
               </p>
             </div>
           </article>
